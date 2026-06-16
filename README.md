@@ -18,11 +18,11 @@ docker pull ghcr.io/lidslabs/jellyfin-hdr:latest
 Specific version (recommended for production):
 
 ```sh
-docker pull ghcr.io/lidslabs/jellyfin-hdr:v0.1.0_jellyfin-10.11.10
+docker pull ghcr.io/lidslabs/jellyfin-hdr:v0.1.0-jellyfin-10.11.10
 ```
 
-Note the underscore: git tags use `+` (semver build metadata), Docker image
-tags substitute `_` because `+` is not a valid Docker tag character.
+Note the dash separator: git tags use `+` (semver build metadata), Docker image
+tags substitute `-` because `+` is not a valid Docker tag character.
 
 ## Enable HDR transcoding
 
@@ -42,10 +42,11 @@ end-to-end. Dolby Vision Profile 7 sources are converted to HDR10 on the fly
 - Pinned fork commit SHA: see [`JELLYFIN_REF`](./JELLYFIN_REF)
 - Lidslabs patch layer version: see [`VERSION`](./VERSION)
 
-Each built image embeds a `/BUILD_INFO` file:
+Each built image embeds a `/BUILD_INFO` file. The official Jellyfin base
+image has an entrypoint, so override it to read the file:
 
 ```sh
-docker run --rm ghcr.io/lidslabs/jellyfin-hdr:latest cat /BUILD_INFO
+docker run --rm --entrypoint cat ghcr.io/lidslabs/jellyfin-hdr:latest /BUILD_INFO
 ```
 
 ## Build
@@ -56,7 +57,16 @@ CI builds and publishes to ghcr.io on every `v*` tag push. See
 To cut a release locally: edit `VERSION` (and `UPSTREAM_VERSION` / `JELLYFIN_REF`
 if upstream changed), commit, then run `./scripts/release.sh`.
 
+## Reporting issues
+
+Bugs, regressions, and questions: open a GitHub issue. See [`SECURITY.md`](./SECURITY.md)
+for security-specific reports.
+
 ## License
 
-Patches and Dockerfile: same license as upstream Jellyfin (GPL-2.0). See
-[upstream LICENSE](https://github.com/jellyfin/jellyfin/blob/master/LICENSE).
+This repository (Dockerfile, build infrastructure, patches) is licensed under
+GPL-2.0-only, matching upstream Jellyfin. Patches are derivative works of
+Jellyfin's GPLv2 source and inherit that license accordingly.
+
+- This repo: see [`LICENSE`](./LICENSE)
+- Upstream Jellyfin: [LICENSE on jellyfin/jellyfin](https://github.com/jellyfin/jellyfin/blob/master/LICENSE)
