@@ -70,8 +70,8 @@ audio codec line should show `-codec:a:0 copy` rather than `libfdk_aac`.
 ### Rationale
 
 4K UHD remuxes typically default to a lossless audio track. Most remote clients
-can play AC3 or E-AC3 5.1 directly; transcoding the lossless track to stereo
-AAC throws away surround information unnecessarily when an existing 5.1
+can play AC3 or E-AC3 5.1 directly; transcoding the lossless track to 
+AAC can throw away surround information unnecessarily when an existing 5.1
 compatibility track is already in the file. Stream-copying that track
 preserves the surround mix without re-encoding.
 
@@ -79,7 +79,7 @@ preserves the surround mix without re-encoding.
 
 The feature is always-on in this release. A future release is planned to add
 a Jellyfin admin UI toggle (and an env var fallback like `JELLYFIN_ALLOW_HDR_TRANSCODE`)
-so it can be opted out of per-server. Until
+so it can be opted out of per-server. 
 
 ## Source and provenance
 
