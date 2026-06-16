@@ -1,4 +1,4 @@
-From 5718c677bfbe1e86c8aba07f43fba6cfd6a4dc2d Mon Sep 17 00:00:00 2001
+From a9076f11b6d5db089ce76a6d33a25352099bf079 Mon Sep 17 00:00:00 2001
 From: Nick Lidestri <nick.lidestri@gmail.com>
 Date: Mon, 15 Jun 2026 19:18:14 -0400
 Subject: [PATCH] lidslabs HDR transcode patches against v10.11.10
