@@ -9,6 +9,10 @@ Upstream patch release pickup. No changes to lidslabs patch layer.
 - Patches rebased cleanly onto v10.11.11 with no conflicts (upstream changeset
   was unrelated to encoding pipeline; touched only `UserManager` lock guarding)
 
+### Documentation
+- README: added full description of audio compatibility-track redirect
+  (feature shipped in v0.1.0 but was previously undocumented in README;
+  only mentioned in CHANGELOG)
 
 All notable changes to lidslabs/jellyfin-hdr.
 

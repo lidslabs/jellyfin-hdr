@@ -35,8 +35,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the pinned tag, the `git am` below will fail loudly.
 RUN git clone --depth 1 --branch v${UPSTREAM_VERSION} \
         https://github.com/jellyfin/jellyfin.git . \
-    && git log -1 --pretty=format:"Upstream tag: v${UPSTREAM_VERSION}%nUpstream commit: %H%nLidslabs commit: ${JELLYFIN_REF}%nBuilt: %ai%n" \
-       > /BUILD_INFO
+    && { \
+        echo "Upstream tag: v${UPSTREAM_VERSION}"; \
+        echo "Upstream commit: $(git rev-parse HEAD)"; \
+        echo "Lidslabs commit: ${JELLYFIN_REF}"; \
+        echo "Built: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"; \
+       } > /BUILD_INFO
 
 # Apply lidslabs patches via git am. Patches were generated with format-patch
 # from the lidslabs/jellyfin fork - git am preserves author and message.

@@ -34,6 +34,53 @@ Default is `0` (stock Jellyfin tonemap-to-SDR behavior). When enabled, HDR10
 end-to-end. Dolby Vision Profile 7 sources are converted to HDR10 on the fly
 (the Dolby Vision RPU/EL is dropped; the BL is genuine HDR10).
 
+## Audio compatibility-track redirect
+
+When Jellyfin would normally transcode a lossless audio track (TrueHD, DTS-HD MA,
+FLAC, etc.) to AAC during a transcoded stream, this build first checks whether
+the file contains a separate lossy surround track in the same language. If one
+is found, the stream is redirected to that track and stream-copied untouched —
+no audio re-encoding.
+
+This applies **only during transcoding**. Direct play is untouched. Files
+without an eligible candidate track transcode normally.
+
+### Redirect criteria
+
+The redirect fires only when *all* of these hold:
+
+1. The audio track is being transcoded (not direct-played).
+2. The requested track has a language tag (no guessing).
+3. The file contains another audio track that:
+   - Matches the requested track's language
+   - Is AC3 or E-AC3
+   - Has ≥6 channels
+   - Passes Jellyfin's `CanStreamCopyAudio` check
+
+If multiple tracks match, the one with the lowest stream index wins.
+
+### Diagnostics
+
+The redirect is silent — there is no log entry when it fires. To verify
+behavior on a specific file, compare the requested `AudioStreamIndex`
+(visible in Jellyfin's playback session log) against the `-map 0:N` audio
+argument in the ffmpeg command. If they differ, the redirect fired and the
+audio codec line should show `-codec:a:0 copy` rather than `libfdk_aac`.
+
+### Rationale
+
+4K UHD remuxes typically default to a lossless audio track. Most remote clients
+can play AC3 or E-AC3 5.1 directly; transcoding the lossless track to stereo
+AAC throws away surround information unnecessarily when an existing 5.1
+compatibility track is already in the file. Stream-copying that track
+preserves the surround mix without re-encoding.
+
+### Current status
+
+The feature is always-on in this release. A future release is planned to add
+a Jellyfin admin UI toggle (and an env var fallback like `JELLYFIN_ALLOW_HDR_TRANSCODE`)
+so it can be opted out of per-server. Until
+
 ## Source and provenance
 
 - Patches (build input): [`patches/`](./patches/) - regenerated from the fork at release time

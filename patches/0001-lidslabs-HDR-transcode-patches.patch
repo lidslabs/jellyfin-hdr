@@ -1,7 +1,13 @@
-From a9076f11b6d5db089ce76a6d33a25352099bf079 Mon Sep 17 00:00:00 2001
+From 7c1660f0b8df22757680df0b992b6ecd14f1ce5b Mon Sep 17 00:00:00 2001
 From: Nick Lidestri <nick.lidestri@gmail.com>
 Date: Mon, 15 Jun 2026 19:18:14 -0400
-Subject: [PATCH] lidslabs HDR transcode patches against v10.11.10
+Subject: [PATCH] lidslabs HDR transcode patches
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Patches against jellyfin upstream — version pin lives in build repo, not
+in this commit message, to avoid stale-subject confusion after rebases.
 
 - HDR10/HDR10+/HLG passthrough for HEVC/AV1 encode (gated by JELLYFIN_ALLOW_HDR_TRANSCODE)
 - DV Profile 7 conditional software decode when subtitle is engaged
