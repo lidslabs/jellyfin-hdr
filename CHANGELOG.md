@@ -1,4 +1,14 @@
 # Changelog
+## [0.2.0+jellyfin-10.11.11] - 2026-06-15
+
+Upstream patch release pickup. No changes to lidslabs patch layer.
+
+### Changed
+- Pinned to upstream Jellyfin v10.11.11 (was v10.11.10)
+- Pinned to runtime base image `jellyfin/jellyfin:10.11.11`
+- Patches rebased cleanly onto v10.11.11 with no conflicts (upstream changeset
+  was unrelated to encoding pipeline; touched only `UserManager` lock guarding)
+
 
 All notable changes to lidslabs/jellyfin-hdr.
 

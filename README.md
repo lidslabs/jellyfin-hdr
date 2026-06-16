@@ -18,7 +18,7 @@ docker pull ghcr.io/lidslabs/jellyfin-hdr:latest
 Specific version (recommended for production):
 
 ```sh
-docker pull ghcr.io/lidslabs/jellyfin-hdr:v0.1.0-jellyfin-10.11.10
+docker pull ghcr.io/lidslabs/jellyfin-hdr:v0.2.0-jellyfin-10.11.11
 ```
 
 Note the dash separator: git tags use `+` (semver build metadata), Docker image
