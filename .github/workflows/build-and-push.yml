@@ -42,6 +42,7 @@ jobs:
           # metadata-action - '+' becomes '_' for Docker tag compatibility.
           tags: |
             type=ref,event=tag
+            type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
           flavor: |
             latest=false
