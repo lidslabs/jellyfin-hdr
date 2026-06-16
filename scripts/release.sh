@@ -21,6 +21,15 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
     exit 1
 fi
 
+if [[ ! "$TAG" =~ -(rc|alpha|beta|dev)\. ]]; then
+    echo "==> $TAG is a NORMAL release (will appear as 'Latest' on GitHub)."
+    read -r -p "==> Continue? [y/N] " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+        echo "Aborted. Bump VERSION to e.g. ${VERSION%-*}-rc.1 for a pre-release." >&2
+        exit 0
+    fi
+fi
+
 echo "==> Regenerating patches from fork"
 ./scripts/regen-patches.sh
 
