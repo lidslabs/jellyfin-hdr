@@ -82,9 +82,7 @@ jobs:
 
             Docker image tag (note: the git tag's `+` becomes `-` per Docker tag rules):
 
-```sh
-            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-```
+                docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
 
             ## Changes
 
