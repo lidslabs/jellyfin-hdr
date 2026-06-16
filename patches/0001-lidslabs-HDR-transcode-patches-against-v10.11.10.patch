@@ -1,0 +1,622 @@
+From 5718c677bfbe1e86c8aba07f43fba6cfd6a4dc2d Mon Sep 17 00:00:00 2001
+From: Nick Lidestri <nick.lidestri@gmail.com>
+Date: Mon, 15 Jun 2026 19:18:14 -0400
+Subject: [PATCH] lidslabs HDR transcode patches against v10.11.10
+
+- HDR10/HDR10+/HLG passthrough for HEVC/AV1 encode (gated by JELLYFIN_ALLOW_HDR_TRANSCODE)
+- DV Profile 7 conditional software decode when subtitle is engaged
+- mainEndsInCudaMemory widening for sw-decoder + nvenc + HDR-passthrough subtitle burn-in
+- Audio compatibility-track redirect
+- HLS manifest tagging (VIDEO-RANGE=PQ/HLG, hvc1.2.4.* for Main10)
+---
+ .../Controllers/DynamicHlsController.cs       |  40 ++-
+ Jellyfin.Api/Helpers/DynamicHlsHelper.cs      |  25 +-
+ .../MediaEncoding/EncodingHelper.cs           | 335 +++++++++++++++++-
+ .../MediaEncoding/EncodingJobInfo.cs          |  17 +
+ 4 files changed, 405 insertions(+), 12 deletions(-)
+
+diff --git a/Jellyfin.Api/Controllers/DynamicHlsController.cs b/Jellyfin.Api/Controllers/DynamicHlsController.cs
+index c69040d4ec..53dda836f2 100644
+--- a/Jellyfin.Api/Controllers/DynamicHlsController.cs
++++ b/Jellyfin.Api/Controllers/DynamicHlsController.cs
+@@ -1422,6 +1422,7 @@ public class DynamicHlsController : BaseJellyfinApiController
+             .ConfigureAwait(false);
+         var mediaSourceId = state.BaseRequest.MediaSourceId;
+         double fps = state.TargetFramerate ?? 0.0f;
++
+         int segmentLength = state.SegmentLength * 1000;
+ 
+         // If video is transcoded and framerate is fractional (i.e. 23.976), we need to slightly adjust segment length
+@@ -1639,6 +1640,15 @@ public class DynamicHlsController : BaseJellyfinApiController
+             {
+                 // fMP4 needs this flag to write the audio packet DTS/PTS including the initial delay into MOOF::TRAF::TFDT
+                 hlsArguments += $" {(useLegacySegmentOption ? "-hls_ts_options" : "-hls_segment_options")} movflags=+frag_discont";
++
++                // NOTE: an earlier revision appended "+cmaf" here for HDR streams to
++                // force a CMAF-compliant colr atom. That broke fMP4 init segment
++                // generation with NVENC HEVC 10-bit (the client's request for
++                // hls1/main/-1.mp4 was canceled and ffmpeg restarted in a loop,
++                // producing ~1s playback then multi-second freezes). The standard
++                // fMP4 muxer already writes the colr atom from the encoder's
++                // -color_primaries / -color_trc / -colorspace args, so +cmaf was
++                // both redundant and harmful. Do not re-add it.
+             }
+ 
+             segmentFormat = "fmp4" + outputFmp4HeaderArg;
+@@ -1662,15 +1672,27 @@ public class DynamicHlsController : BaseJellyfinApiController
+                 Path.GetFileNameWithoutExtension(outputPath));
+         }
+ 
++        // Timestamp handling. Jellyfin defaults to "-copyts -avoid_negative_ts disabled"
++        // for HLS seek accuracy. We use "make_zero" instead for HDR transcodes as a
++        // defense against negative-timestamp issues that surfaced when this build
++        // used fMP4 segments (fMP4 tfdt boxes are strictly unsigned; "disabled"
++        // could wrap negative and crash ExoPlayer). We're back on MPEG-TS now and
++        // TS has no tfdt box, so make_zero is largely defensive here - but it's
++        // also harmless and the safest value if delivery ever changes back.
++        var tsArgs = EncodingHelper.IsHdrPassthroughMode(state)
++            ? "-copyts -avoid_negative_ts make_zero"
++            : "-copyts -avoid_negative_ts disabled";
++
+         return string.Format(
+             CultureInfo.InvariantCulture,
+-            "{0} {1} -map_metadata -1 -map_chapters -1 -threads {2} {3} {4} {5} -copyts -avoid_negative_ts disabled -max_muxing_queue_size {6} -f hls -max_delay 5000000 -hls_time {7} -hls_segment_type {8} -start_number {9}{10} -hls_segment_filename \"{11}\" {12} -y \"{13}\"",
++            "{0} {1} -map_metadata -1 -map_chapters -1 -threads {2} {3} {4} {5} {6} -max_muxing_queue_size {7} -f hls -max_delay 5000000 -hls_time {8} -hls_segment_type {9} -start_number {10}{11} -hls_segment_filename \"{12}\" {13} -y \"{14}\"",
+             inputModifier,
+             _encodingHelper.GetInputArgument(state, _encodingOptions, segmentContainer),
+             threads,
+             mapArgs,
+             GetVideoArguments(state, startNumber, isEventPlaylist, segmentContainer),
+             GetAudioArguments(state),
++            tsArgs,
+             maxMuxingQueueSize,
+             state.SegmentLength.ToString(CultureInfo.InvariantCulture),
+             segmentFormat,
+@@ -2069,6 +2091,22 @@ public class DynamicHlsController : BaseJellyfinApiController
+         {
+             return fileSystem.GetFiles(folder, new[] { segmentExtension }, true, false)
+                 .Where(i => Path.GetFileNameWithoutExtension(i.Name).StartsWith(filePrefix, StringComparison.OrdinalIgnoreCase))
++                // Defensive filter: exclude any init segment named "<prefix>-1<ext>".
++                // Under MPEG-TS delivery (the current default) no init segment is
++                // produced, so this is a no-op. Kept for safety: if delivery is ever
++                // switched to fMP4, the init segment's "-1" suffix would parse to
++                // index -1 and poison GetCurrentTranscodingIndex - the negative
++                // index makes the throttle/gap logic think the transcode is
++                // perpetually behind, causing Jellyfin to kill/respawn ffmpeg in a
++                // loop (which trips NVDEC errors as a downstream effect).
++                // Media segments are always index >= 0; only the init segment would
++                // be negative, so this filter is both safe under TS and protective
++                // if fMP4 is ever re-enabled.
++                .Where(i =>
++                {
++                    var indexSpan = Path.GetFileNameWithoutExtension(i.Name.AsSpan()).Slice(filePrefix.Length);
++                    return int.TryParse(indexSpan, NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx) && idx >= 0;
++                })
+                 .MaxBy(fileSystem.GetLastWriteTimeUtc);
+         }
+         catch (IOException)
+diff --git a/Jellyfin.Api/Helpers/DynamicHlsHelper.cs b/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
+index 16e51151d9..295176c3c0 100644
+--- a/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
++++ b/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
+@@ -367,7 +367,18 @@ public class DynamicHlsHelper
+         {
+             var videoRange = state.VideoStream.VideoRange;
+             var videoRangeType = state.VideoStream.VideoRangeType;
+-            if (EncodingHelper.IsCopyCodec(state.OutputVideoCodec))
++
++            // Emit HDR signaling when:
++            //  (a) the stream is being copied (existing behavior), OR
++            //  (b) the transcode pipeline is in HDR passthrough mode, in which case
++            //      the output bytes are HDR even though OutputVideoCodec != "copy".
++            // Without case (b), the manifest declares VIDEO-RANGE=SDR while the
++            // bitstream carries BT.2020/PQ, which causes some players (ExoPlayer in
++            // particular) to mis-initialize the rendering pipeline.
++            var isHdrOutput = EncodingHelper.IsCopyCodec(state.OutputVideoCodec)
++                || EncodingHelper.IsHdrPassthroughMode(state);
++
++            if (isHdrOutput)
+             {
+                 if (videoRange == VideoRange.SDR)
+                 {
+@@ -390,7 +401,7 @@ public class DynamicHlsHelper
+             }
+             else
+             {
+-                // Currently we only encode to SDR.
++                // Encoding to SDR (the tonemap path)
+                 builder.Append(",VIDEO-RANGE=SDR");
+             }
+         }
+@@ -740,6 +751,16 @@ public class DynamicHlsHelper
+             }
+         }
+ 
++        // HDR passthrough: the bitstream is 10-bit HEVC Main10. The HLS CODECS attribute
++        // must reflect this (hvc1.2.4.* rather than hvc1.1.6.*). HlsCodecStringHelpers
++        // derives the profile_idc / compatibility / level fields from this string.
++        if (EncodingHelper.IsHdrPassthroughMode(state)
++            && (string.Equals(state.ActualOutputVideoCodec, "h265", StringComparison.OrdinalIgnoreCase)
++                || string.Equals(state.ActualOutputVideoCodec, "hevc", StringComparison.OrdinalIgnoreCase)))
++        {
++            profileString = "main10";
++        }
++
+         return profileString;
+     }
+ 
+diff --git a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+index 8aeec3f3d6..12bc8ea895 100644
+--- a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
++++ b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+@@ -355,6 +355,12 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 return false;
+             }
+ 
++            // HDR passthrough: skip tonemap so HDR survives the pipeline.
++            if (IsHdrPassthroughMode(state))
++            {
++                return false;
++            }
++
+             if (state.VideoStream.VideoRange == VideoRange.HDR
+                 && state.VideoStream.VideoRangeType == VideoRangeType.DOVI)
+             {
+@@ -2145,8 +2151,10 @@ namespace MediaBrowser.Controller.MediaEncoding
+             }
+ 
+             // We only transcode to HEVC 8-bit for now, force Main Profile.
+-            if (profile.Contains("main10", StringComparison.OrdinalIgnoreCase)
+-                || profile.Contains("mainstill", StringComparison.OrdinalIgnoreCase))
++            // Exception: HDR passthrough mode needs Main10 for 10-bit HDR output.
++            if ((profile.Contains("main10", StringComparison.OrdinalIgnoreCase)
++                 || profile.Contains("mainstill", StringComparison.OrdinalIgnoreCase))
++                && !IsHdrPassthroughMode(state))
+             {
+                 profile = "main";
+             }
+@@ -2225,6 +2233,20 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 profile = "constrained_high";
+             }
+ 
++            // HDR passthrough: force Main10 for HEVC output so we can carry 10-bit HDR.
++            // The standard profile selection above will have left us with "main" or empty;
++            // we promote to "main10" here. AV1 has only Main profile (10-bit handled
++            // separately via pixel format).
++            if (IsHdrPassthroughMode(state)
++                && (string.Equals(videoEncoder, "hevc_nvenc", StringComparison.OrdinalIgnoreCase)
++                    || string.Equals(videoEncoder, "hevc_qsv", StringComparison.OrdinalIgnoreCase)
++                    || string.Equals(videoEncoder, "hevc_vaapi", StringComparison.OrdinalIgnoreCase)
++                    || string.Equals(videoEncoder, "hevc_amf", StringComparison.OrdinalIgnoreCase)
++                    || string.Equals(videoEncoder, "libx265", StringComparison.OrdinalIgnoreCase)))
++            {
++                profile = "main10";
++            }
++
+             if (!string.IsNullOrEmpty(profile))
+             {
+                 // Currently there's no profile option in av1_nvenc encoder
+@@ -2333,6 +2355,33 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 param += " -sei -a53_cc";
+             }
+ 
++            // HDR passthrough: emit explicit color tagging so the bitstream VUI/SEI
++            // declares HDR10 (BT.2020 / SMPTE2084 PQ / BT.2020 non-constant luminance).
++            // Without these, NVENC produces a Main10 stream but with empty color VUI,
++            // which causes clients to fall back to SDR rendering even with a correct
++            // manifest. For HLG content we use arib-std-b67 transfer instead of smpte2084.
++            //
++            // Note: keyframe / segment-boundary alignment is already handled by
++            // GetHlsVideoKeyFrameArguments() which is called separately from
++            // DynamicHlsController.GetVideoArguments(). It emits -g / -keyint_min sized
++            // to the segment length and NVENC respects it as a GOP cadence target.
++            if (IsHdrPassthroughMode(state))
++            {
++                // Determine PQ vs HLG transfer. For plain HDR the ColorTransfer VUI
++                // is reliable. For Dolby Vision the VUI transfer may be absent or
++                // generic (DV signals via RPU), so we also treat DOVIWithHLG as HLG
++                // and everything else DV as PQ (HDR10 base).
++                var rangeType = state.VideoStream?.VideoRangeType;
++                var isHlg = string.Equals(state.VideoStream?.ColorTransfer, "arib-std-b67", StringComparison.OrdinalIgnoreCase)
++                    || rangeType == VideoRangeType.HLG
++                    || rangeType == VideoRangeType.DOVIWithHLG;
++                var transfer = isHlg ? "arib-std-b67" : "smpte2084";
++                param += " -color_primaries:v:0 bt2020"
++                       + " -color_trc:v:0 " + transfer
++                       + " -colorspace:v:0 bt2020nc"
++                       + " -color_range:v:0 tv";
++            }
++
+             return param;
+         }
+ 
+@@ -3967,14 +4016,14 @@ namespace MediaBrowser.Controller.MediaEncoding
+                     mainFilters.Add(swDeintFilter);
+                 }
+ 
+-                var outFormat = doCuTonemap ? "yuv420p10le" : "yuv420p";
++                var outFormat = (doCuTonemap || IsHdrPassthroughMode(state)) ? "yuv420p10le" : "yuv420p";
+                 var swScaleFilter = GetSwScaleFilter(state, options, vidEncoder, swpInW, swpInH, threeDFormat, reqW, reqH, reqMaxW, reqMaxH);
+                 // sw scale
+                 mainFilters.Add(swScaleFilter);
+                 mainFilters.Add($"format={outFormat}");
+ 
+                 // sw => hw
+-                if (doCuTonemap)
++                if (doCuTonemap || IsHdrPassthroughMode(state))
+                 {
+                     mainFilters.Add("hwupload=derive_device=cuda");
+                 }
+@@ -3997,7 +4046,12 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 }
+ 
+                 var isRext = IsVideoStreamHevcRext(state);
+-                var outFormat = doCuTonemap ? (isRext ? "p010" : string.Empty) : "yuv420p";
++                var isHdrPassthrough = IsHdrPassthroughMode(state);
++                // HDR passthrough requires 10-bit (p010) surface end-to-end. Without p010,
++                // CUDA scale converts back to 8-bit yuv420p and destroys HDR precision.
++                var outFormat = isHdrPassthrough
++                    ? "p010"
++                    : (doCuTonemap ? (isRext ? "p010" : string.Empty) : "yuv420p");
+                 var hwScaleFilter = GetHwScaleFilter("scale", "cuda", outFormat, false, swpInW, swpInH, reqW, reqH, reqMaxW, reqMaxH);
+                 // hw scale
+                 mainFilters.Add(hwScaleFilter);
+@@ -4016,9 +4070,9 @@ namespace MediaBrowser.Controller.MediaEncoding
+             {
+                 memoryOutput = true;
+ 
+-                // OUTPUT yuv420p surface(memory)
++                // OUTPUT yuv420p surface(memory) -- or p010 in HDR passthrough mode
+                 mainFilters.Add("hwdownload");
+-                mainFilters.Add("format=yuv420p");
++                mainFilters.Add(IsHdrPassthroughMode(state) ? "format=p010le" : "format=yuv420p");
+             }
+ 
+             // OUTPUT yuv420p surface(memory)
+@@ -4042,7 +4096,22 @@ namespace MediaBrowser.Controller.MediaEncoding
+             /* Make sub and overlay filters for subtitle stream */
+             var subFilters = new List<string>();
+             var overlayFilters = new List<string>();
+-            if (isCuInCuOut)
++
++            // Detect whether main video frames end up in CUDA memory at this point.
++            // Stock behavior: only true when both decoder AND encoder are CUDA (isCuInCuOut).
++            // lidslabs custom: also true in HDR passthrough mode when sw-decode is forced
++            // (e.g. for DV Profile 7 dual-layer) but NVENC is the encoder, because in that
++            // case the main filter chain ends with `hwupload=derive_device=cuda` to push
++            // sw-decoded frames into CUDA memory for NVENC. Without this widened check,
++            // the filter-graph builder would use the CPU `overlay` path while video is
++            // in CUDA memory, causing "Impossible to convert between formats supported
++            // by hwupload and auto_scale" errors. The CUDA-native subtitle path
++            // (yuva420p -> hwupload -> overlay_cuda) handles burn-in cleanly.
++            var mainEndsInCudaMemory = isCuInCuOut
++                || (isSwDecoder && isNvencEncoder
++                    && (doCuTonemap || IsHdrPassthroughMode(state)));
++
++            if (mainEndsInCudaMemory)
+             {
+                 if (hasSubs)
+                 {
+@@ -6270,6 +6339,14 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 return GetInputHdrParam(state.VideoStream?.ColorTransfer);
+             }
+ 
++            // HDR passthrough: preserve HDR primaries/transfer/matrix instead of
++            // rewriting to bt709. Without this, the filter chain emits SDR setparams
++            // which silently downgrades the color signaling before encode.
++            if (IsHdrPassthroughMode(state))
++            {
++                return GetInputHdrParam(state.VideoStream?.ColorTransfer);
++            }
++
+             return GetOutputSdrParam(null);
+         }
+ 
+@@ -6301,6 +6378,97 @@ namespace MediaBrowser.Controller.MediaEncoding
+             return "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709";
+         }
+ 
++        // ====================================================================
++        // HDR Passthrough Transcoding (lidslabs custom)
++        // ====================================================================
++        // Returns true when the encoder pipeline should preserve HDR rather
++        // than tonemap to SDR. Gated on environment variable
++        // JELLYFIN_ALLOW_HDR_TRANSCODE=1 for safe rollout. Once verified, this
++        // gate will move to EncodingOptions.AllowHdrTranscoding and become a
++        // user-toggleable setting in the admin dashboard.
++        //
++        // Conditions:
++        //   - Source is HDR10 / HDR10+ / HLG, OR Dolby Vision WITH a usable
++        //     HDR10/HLG base layer (profiles 7 and 8.1/8.4). For those DV files
++        //     the decoder (NVDEC) emits the HDR10/HLG base layer and we keep it
++        //     in the HDR colorspace instead of tonemapping. The RPU/EL are simply
++        //     ignored by the decode path; the static HDR10 base remains valid.
++        //   - Profile 5 (bare DOVI, IPTPQc2 cross-talk matrix) is EXCLUDED: its
++        //     base layer is NOT displayable as HDR10 and stripping the RPU yields
++        //     distorted (green/pink) color. Those fall through to tonemap-to-SDR.
++        //   - DOVIWithSDR (profile 8.2) is EXCLUDED: base layer is SDR, nothing
++        //     to preserve.
++        //   - Source is 10-bit
++        //   - Output codec supports 10-bit (HEVC or AV1)
++        //   - Gate flag is set
++        public static bool IsHdrPassthroughMode(EncodingJobInfo state)
++        {
++            if (state?.VideoStream is null)
++            {
++                return false;
++            }
++
++            if (state.VideoStream.VideoRange != VideoRange.HDR)
++            {
++                return false;
++            }
++
++            var rangeType = state.VideoStream.VideoRangeType;
++
++            // Dolby Vision handling: allow only DV variants with a usable HDR10
++            // or HLG base layer. IsDoviWithHdr10Bl() (Jellyfin's own helper)
++            // covers profiles 7 and 8.1 (DOVIWithHDR10, DOVIWithEL,
++            // DOVIWithHDR10Plus, DOVIWithELHDR10Plus, DOVIInvalid). DOVIWithHLG
++            // (profile 8.4) has an HLG base which our color args handle via the
++            // arib-std-b67 transfer branch. Everything else DV-related is excluded:
++            //   - bare DOVI (profile 5): NOT HDR10-displayable -> must tonemap
++            //   - DOVIWithSDR (profile 8.2): SDR base -> nothing to preserve
++            var isDoviWithUsableBase =
++                IsDoviWithHdr10Bl(state.VideoStream)
++                || rangeType == VideoRangeType.DOVIWithHLG;
++            var isBareProfile5 = rangeType == VideoRangeType.DOVI;
++            var isDoviWithSdr = rangeType == VideoRangeType.DOVIWithSDR;
++
++            if (isBareProfile5 || isDoviWithSdr)
++            {
++                // Unsafe to preserve as HDR; let the stock tonemap path handle it.
++                return false;
++            }
++
++            // If it's a DV type that is NOT in our usable-base allowlist and also
++            // not one of the plain HDR types below, be conservative and bail.
++            // (Plain HDR10 / HDR10+ / HLG have rangeType in the non-DOVI set and
++            // pass straight through; DV types must be explicitly allowed.)
++            var isDoviAtAll = IsDovi(state.VideoStream);
++            if (isDoviAtAll && !isDoviWithUsableBase)
++            {
++                return false;
++            }
++
++            if (GetVideoColorBitDepth(state) < 10)
++            {
++                return false;
++            }
++
++            var targetCodec = state.ActualOutputVideoCodec;
++            if (!string.Equals(targetCodec, "hevc", StringComparison.OrdinalIgnoreCase)
++                && !string.Equals(targetCodec, "h265", StringComparison.OrdinalIgnoreCase)
++                && !string.Equals(targetCodec, "av1", StringComparison.OrdinalIgnoreCase))
++            {
++                return false;
++            }
++
++            // Environment-variable gate. Set JELLYFIN_ALLOW_HDR_TRANSCODE=1 to enable.
++            var envFlag = Environment.GetEnvironmentVariable("JELLYFIN_ALLOW_HDR_TRANSCODE");
++            if (string.IsNullOrEmpty(envFlag))
++            {
++                return false;
++            }
++
++            return string.Equals(envFlag, "1", StringComparison.Ordinal)
++                || string.Equals(envFlag, "true", StringComparison.OrdinalIgnoreCase);
++        }
++
+         public static int GetVideoColorBitDepth(EncodingJobInfo state)
+         {
+             var videoStream = state.VideoStream;
+@@ -6369,6 +6537,48 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 return null;
+             }
+ 
++            // Dolby Vision dual-layer (Profile 7, BL+EL+RPU) + subtitle delivery:
++            // force SOFTWARE decode of the base layer. The decoded BL frames are
++            // then uploaded to CUDA for the NVENC encode (see the isSwDecoder +
++            // IsHdrPassthroughMode branch in the filter chain).
++            //
++            // Why this is needed:
++            //   Empirically, transcoding a DV Profile 7 file via hardware NVDEC
++            //   when a subtitle track is being delivered causes playback to
++            //   freeze/stall on the client. Confirmed on Send Help and Batman
++            //   (1989 UHD restoration). The failure happens with both SRT (any)
++            //   and PGS (when the PGS is malformed, e.g. from low-quality
++            //   torrent sources). Software decoding the base layer produces
++            //   frames in a CPU-side pixel format that flows through the
++            //   subtitle-handling filter graph cleanly, where hardware-decoded
++            //   CUDA surfaces hit a routing problem we have not fully isolated.
++            //   The Housemaid test established that software decode resolves
++            //   this independent of subtitle content.
++            //
++            // Why this is conditional on subtitle delivery (not just DV presence):
++            //   DV transcodes work cleanly on hardware when no subtitle is being
++            //   delivered. The cost of software decode (~7 CPU cores, ~1.6-1.9x
++            //   throughput vs. ~2x+ for hardware) only needs to be paid when a
++            //   subtitle is actually engaged. By gating on state.SubtitleStream,
++            //   we keep full hardware throughput for the common case (DV file,
++            //   no subtitles) and only fall back to software when the user
++            //   selects subtitles or when a track auto-engages (forced/default).
++            //
++            // Detection: we trigger on multiple DV-dual-layer signals so this
++            // fires reliably across files where Jellyfin's probe populates the
++            // DV fields inconsistently:
++            //   - ElPresentFlag == 1 (explicit dual-layer marker)
++            //   - DvProfile == 7 (profile 7 ALWAYS has an EL by definition)
++            // Either signal triggers sw-decode. Single-layer DV profiles
++            // (4, 5, 8.x) leave both signals unset/non-matching and keep
++            // hardware decode regardless of subtitle state.
++            if (IsHdrPassthroughMode(state)
++                && (videoStream.ElPresentFlag == 1 || videoStream.DvProfile == 7)
++                && state.SubtitleStream is not null)
++            {
++                return null;
++            }
++
+             var hardwareAccelerationType = options.HardwareAccelerationType;
+ 
+             if (!string.IsNullOrEmpty(videoStream.Codec) && hardwareAccelerationType != HardwareAccelerationType.none)
+@@ -7397,6 +7607,96 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 state.SubtitleDeliveryMethod = videoRequest.SubtitleMethod;
+                 state.AudioStream = GetMediaStream(mediaStreams, videoRequest.AudioStreamIndex, MediaStreamType.Audio);
+ 
++                // ============================================================
++                // Audio compatibility-track redirect (lidslabs custom)
++                // ============================================================
++                // PROBLEM: When the originally-selected audio track is TrueHD,
++                // MLP, or DTS-HD MA and the output is HLS, Jellyfin reports
++                // CanStreamCopyAudio == true and either muxes lossless audio in
++                // a way ExoPlayer clients struggle with, or falls back to
++                // transcoding the audio to AAC (which is lossy and loses
++                // surround channels). Symptom: audio decodes briefly then
++                // stalls, or plays as compressed AAC. Either way, the user
++                // experience is poor.
++                //
++                // FIX: When the output is HLS AND the selected audio codec is
++                // truehd/mlp/dts, scan for a same-language multi-channel AC3 or
++                // E-AC3 track in the same file. If one exists, redirect
++                // state.AudioStream to it - the AC3/E-AC3 track stream-copies
++                // cleanly into HLS on every client that handles HLS at all,
++                // delivering full surround sound losslessly without any
++                // re-encoding.
++                //
++                // Gating (all must hold for the redirect to fire):
++                //   1. We have a non-null AudioStream.
++                //   2. Output is HLS (state.TranscodingType == Hls).
++                //   3. Original codec is truehd, mlp, or dts.
++                //   4. At least one alternative track exists where:
++                //        - codec is ac3 or eac3 (universally HLS-friendly)
++                //        - channels >= 6 (excludes 2-channel commentary tracks)
++                //        - language matches the originally-selected track
++                //
++                // IMPORTANT: We deliberately do NOT gate on CanStreamCopyAudio
++                // anywhere here. At this point in AttachMediaSourceInfo,
++                // state.SupportedAudioCodecs is still the empty array set by
++                // the EncodingJobInfo constructor - it's populated ~70 lines
++                // later. An earlier revision of this patch checked Length > 0
++                // and silently skipped because of this ordering. AC3/E-AC3 are
++                // universally stream-copyable into HLS, so the per-client
++                // capability check is unnecessary anyway.
++                //
++                // Tie-breaker: lowest stream index (compatibility tracks are
++                // conventionally ordered before commentary tracks in the file).
++                //
++                // No-op cases that fall through to normal behavior:
++                //   - Direct play (this whole method isn't on that path)
++                //   - Non-HLS output (e.g. progressive transcode)
++                //   - Selected track is AC3/E-AC3/AAC etc. (already HLS-friendly)
++                //   - No AC3/E-AC3 6+ channel same-language alternative exists
++                //     (TrueHD-only files, DTS-HD MA without AC3 fallback,
++                //      foreign-language only tracks like Parasite French TrueHD).
++                if (state.AudioStream is not null
++                    && state.TranscodingType == TranscodingJobType.Hls)
++                {
++                    var originalCodec = state.AudioStream.Codec ?? string.Empty;
++                    var isProblematicInFmp4 =
++                        string.Equals(originalCodec, "truehd", StringComparison.OrdinalIgnoreCase)
++                        || string.Equals(originalCodec, "mlp", StringComparison.OrdinalIgnoreCase)
++                        || string.Equals(originalCodec, "dts", StringComparison.OrdinalIgnoreCase);
++
++                    if (isProblematicInFmp4)
++                    {
++                        var originalLanguage = state.AudioStream.Language;
++
++                        // Language match is required; null/empty language doesn't match
++                        // anything (conservative - we'd rather transcode than risk a
++                        // cross-language redirect).
++                        if (!string.IsNullOrEmpty(originalLanguage))
++                        {
++                            var candidate = mediaStreams
++                                .Where(s => s.Type == MediaStreamType.Audio)
++                                .Where(s => s.Index != state.AudioStream.Index)
++                                .Where(s => (string.Equals(s.Codec, "ac3", StringComparison.OrdinalIgnoreCase)
++                                             || string.Equals(s.Codec, "eac3", StringComparison.OrdinalIgnoreCase)))
++                                .Where(s => (s.Channels ?? 0) >= 6)
++                                .Where(s => string.Equals(s.Language, originalLanguage, StringComparison.OrdinalIgnoreCase))
++                                .OrderBy(s => s.Index)
++                                .FirstOrDefault();
++
++                            if (candidate is not null)
++                            {
++                                // Silent redirect (EncodingHelper has no logger). Verify by
++                                // inspecting the generated ffmpeg command's -map 0:N value:
++                                // if the redirected candidate's container-relative index
++                                // appears instead of the originally-requested index, the
++                                // redirect fired.
++                                state.AudioStream = candidate;
++                            }
++                        }
++                    }
++                }
++                // ============================================================
++
+                 if (state.SubtitleStream is not null && !state.SubtitleStream.IsExternal)
+                 {
+                     state.InternalSubtitleStreamOffset = mediaStreams.Where(i => i.Type == MediaStreamType.Subtitle && !i.IsExternal).ToList().IndexOf(state.SubtitleStream);
+@@ -7661,7 +7961,24 @@ namespace MediaBrowser.Controller.MediaEncoding
+                         args += " -copyts";
+                     }
+ 
+-                    args += " -avoid_negative_ts disabled";
++                    // HDR passthrough: use make_zero (not disabled) as a defensive
++                    // timestamp normalization. Originally added to defend against
++                    // negative tfdt boxes when this build used fMP4 segments
++                    // (ExoPlayer rejects negative tfdt with "Top bit not zero").
++                    // We're on MPEG-TS now and TS has no tfdt box, so this is
++                    // largely defensive - but it's also harmless and safer than
++                    // "disabled" if delivery is ever switched back. See the
++                    // matching logic in DynamicHlsController.GetVideoArguments'
++                    // tsArgs. This branch only fires when CopyTimestamps is
++                    // enabled; the controller handles the default path.
++                    if (IsHdrPassthroughMode(state))
++                    {
++                        args += " -avoid_negative_ts make_zero";
++                    }
++                    else
++                    {
++                        args += " -avoid_negative_ts disabled";
++                    }
+ 
+                     if (!(state.SubtitleStream is not null && state.SubtitleStream.IsExternal && !state.SubtitleStream.IsTextSubtitleStream))
+                     {
+diff --git a/MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs b/MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs
+index 43680f5c01..eeae3e42b4 100644
+--- a/MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs
++++ b/MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs
+@@ -380,6 +380,12 @@ namespace MediaBrowser.Controller.MediaEncoding
+                     return VideoStream?.VideoRangeType ?? VideoRangeType.Unknown;
+                 }
+ 
++                // HDR passthrough preserves the source range type even though we transcode.
++                if (EncodingHelper.IsHdrPassthroughMode(this))
++                {
++                    return VideoStream?.VideoRangeType ?? VideoRangeType.Unknown;
++                }
++
+                 if (Enum.TryParse(GetRequestedRangeTypes(ActualOutputVideoCodec).FirstOrDefault() ?? "Unknown", true, out VideoRangeType requestedRangeType))
+                 {
+                     return requestedRangeType;
+@@ -389,6 +395,17 @@ namespace MediaBrowser.Controller.MediaEncoding
+             }
+         }
+ 
++        /// <summary>
++        /// Gets a value indicating whether the encoder pipeline is in HDR passthrough mode.
++        /// </summary>
++        /// <remarks>
++        /// Convenience wrapper around <see cref="EncodingHelper.IsHdrPassthroughMode(EncodingJobInfo)"/>
++        /// so other components can query encoding state without taking a hard dependency
++        /// on EncodingHelper. Currently gated on the <c>JELLYFIN_ALLOW_HDR_TRANSCODE</c>
++        /// environment variable.
++        /// </remarks>
++        public bool IsHdrTranscoding => EncodingHelper.IsHdrPassthroughMode(this);
++
+         public string TargetVideoCodecTag
+         {
+             get
+-- 
+2.43.0
+
