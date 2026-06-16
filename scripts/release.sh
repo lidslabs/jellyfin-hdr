@@ -39,7 +39,7 @@ git push origin "$TAG"
 
 echo
 echo "Done. GHA will build and publish:"
-echo "  ghcr.io/lidslabs/jellyfin-hdr:${TAG//+/_}"
+echo "  ghcr.io/lidslabs/jellyfin-hdr:${TAG//+/-}"
 echo "  ghcr.io/lidslabs/jellyfin-hdr:latest"
 echo
 echo "Watch:  https://github.com/lidslabs/jellyfin-hdr/actions"
