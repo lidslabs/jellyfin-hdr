@@ -1,0 +1,150 @@
+From 297f595ecb5091b95ce6b345342df1ab38c9ae9a Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Sun, 21 Jun 2026 19:56:02 -0400
+Subject: [PATCH 2/2] lidslabs: force HEVC transcode for HDR-capable clients
+ that request AVC
+
+Several tvOS clients (Neptune in Apple-AV and Trident modes, Streamyfin)
+send DeviceProfiles requesting h264/SDR transcodes even though their
+players support HEVC/HDR10. The v0.2 HDR-passthrough path never engages
+for them, so HDR sources tonemap to SDR. Log analysis confirmed every
+ffmpeg invocation for these clients used h264_nvenc + tonemap_cuda.
+
+Add an opt-in, env-gated hook in MediaInfoController.GetPostedPlaybackInfo
+that prepends "hevc" to the video TranscodingProfiles before StreamBuilder
+consumes them, causing the unchanged v0.2 patches to preserve HDR10
+signaling through the NVENC re-encode.
+
+Gated on ALL of:
+  - JELLYFIN_ALLOW_HDR_TRANSCODE=1   (existing v0.2 master toggle)
+  - request UA matches LIDSLABS_TRANSCODER_FORCE_HEVC_USER_AGENTS
+  - at least one media source is HDR
+  - DeviceProfile declares HEVC somewhere (DirectPlay/Transcoding/
+    CodecProfile) -- safety check so we never force a codec the client
+    never advertised
+
+Eligibility (toggle/UA/profile) is computed right after profile
+resolution; the HDR-source check and the rewrite run after
+GetPlaybackInfo populates info.MediaSources, since the source's video
+range isn't known earlier. The rewrite mutates the shared profile once
+per request, correct for single-version library items.
+
+The codec tokenizer (split + trim + drop-empty) also fixes a pre-existing
+parse bug for clients sending "h264, hevc" with a leading space, which
+stock Jellyfin's split-without-trim silently drops the hevc token from.
+
+Preserves HDR10/HLG signaling only. Does NOT preserve Dolby Vision RPU
+NAL units: a forced DV Profile 7 source transcodes to HDR10, not DV.
+---
+ .../Controllers/MediaInfoController.cs        | 69 +++++++++++++++++++
+ 1 file changed, 69 insertions(+)
+
+diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
+index f22ac0b73a..255610acee 100644
+--- a/Jellyfin.Api/Controllers/MediaInfoController.cs
++++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
+@@ -8,11 +8,13 @@ using Jellyfin.Api.Attributes;
+ using Jellyfin.Api.Extensions;
+ using Jellyfin.Api.Helpers;
+ using Jellyfin.Api.Models.MediaInfoDtos;
++using Jellyfin.Data.Enums;
+ using Jellyfin.Extensions;
+ using MediaBrowser.Common.Extensions;
+ using MediaBrowser.Controller.Devices;
+ using MediaBrowser.Controller.Entities;
+ using MediaBrowser.Controller.Library;
++using MediaBrowser.Model.Dlna;
+ using MediaBrowser.Model.MediaInfo;
+ using Microsoft.AspNetCore.Authorization;
+ using Microsoft.AspNetCore.Http;
+@@ -146,6 +148,17 @@ public class MediaInfoController : BaseJellyfinApiController
+             }
+         }
+ 
++        // lidslabs v0.3: forced-HEVC override — source-independent gate.
++        // Computed here (profile is resolved); the HDR-source check and the
++        // actual TranscodingProfile rewrite happen below, once info.MediaSources exists.
++        var lidslabsForceHevcEligible =
++            LidslabsHdrTranscodeEnabled()
++            && profile is not null
++            && LidslabsUserAgentMatches(
++                Request.Headers.UserAgent.ToString(),
++                Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_USER_AGENTS"))
++            && LidslabsProfileClaimsHevc(profile);
++
+         // Copy params from posted body
+         // TODO clean up when breaking API compatibility.
+         userId ??= playbackInfoDto?.UserId;
+@@ -188,6 +201,26 @@ public class MediaInfoController : BaseJellyfinApiController
+ 
+         if (profile is not null)
+         {
++            // lidslabs v0.3: if eligible and any source is HDR, force HEVC to the
++            // front of the video TranscodingProfiles so the v0.2 HDR-passthrough
++            // path engages instead of h264+tonemap-to-SDR. Mutates the shared
++            // profile once per request (acceptable for single-version library items).
++            if (lidslabsForceHevcEligible
++                && info.MediaSources.Any(ms => ms.VideoStream?.VideoRange == VideoRange.HDR))
++            {
++                foreach (var tp in profile.TranscodingProfiles.Where(t => t.Type == DlnaProfileType.Video))
++                {
++                    var codecs = LidslabsSplitTrim(tp.VideoCodec)
++                        .Where(c => !string.Equals(c, "hevc", StringComparison.OrdinalIgnoreCase));
++                    tp.VideoCodec = string.Join(",", new[] { "hevc" }.Concat(codecs));
++                }
++
++                _logger.LogInformation(
++                    "lidslabs: forced HEVC override fired for UA={UserAgent}, item={ItemId}",
++                    Request.Headers.UserAgent.ToString(),
++                    itemId);
++            }
++
+             // set device specific data
+             foreach (var mediaSource in info.MediaSources)
+             {
+@@ -246,6 +279,42 @@ public class MediaInfoController : BaseJellyfinApiController
+         }
+ 
+         return info;
++
++        // lidslabs v0.3 helpers (static local functions — no instance capture).
++
++        // Mirrors the master-toggle read in EncodingHelper (v0.2). Source of truth:
++        // MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs — accepts "1" or
++        // "true" (case-insensitive). Keep in sync if that rule changes; the two
++        // features must agree on what "on" means or the override fragments silently.
++        static bool LidslabsHdrTranscodeEnabled()
++        {
++            var envFlag = Environment.GetEnvironmentVariable("JELLYFIN_ALLOW_HDR_TRANSCODE");
++            if (string.IsNullOrEmpty(envFlag))
++            {
++                return false;
++            }
++
++            return string.Equals(envFlag, "1", StringComparison.Ordinal)
++                || string.Equals(envFlag, "true", StringComparison.OrdinalIgnoreCase);
++        }
++
++        static string[] LidslabsSplitTrim(string? value)
++            => (value ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
++
++        static bool LidslabsUserAgentMatches(string userAgent, string? csv)
++        {
++            if (string.IsNullOrEmpty(userAgent) || string.IsNullOrWhiteSpace(csv))
++            {
++                return false;
++            }
++
++            return LidslabsSplitTrim(csv).Any(sub => userAgent.Contains(sub, StringComparison.OrdinalIgnoreCase));
++        }
++
++        static bool LidslabsProfileClaimsHevc(DeviceProfile p)
++            => p.DirectPlayProfiles.Any(dp => LidslabsSplitTrim(dp.VideoCodec).Contains("hevc", StringComparer.OrdinalIgnoreCase))
++                || p.TranscodingProfiles.Any(tp => LidslabsSplitTrim(tp.VideoCodec).Contains("hevc", StringComparer.OrdinalIgnoreCase))
++                || p.CodecProfiles.Any(cp => LidslabsSplitTrim(cp.Codec).Contains("hevc", StringComparer.OrdinalIgnoreCase));
+     }
+ 
+     /// <summary>
+-- 
+2.43.0
+

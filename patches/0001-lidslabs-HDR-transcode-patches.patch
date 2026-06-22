@@ -1,7 +1,7 @@
-From 7c1660f0b8df22757680df0b992b6ecd14f1ce5b Mon Sep 17 00:00:00 2001
-From: lidslabs
-Date: Mon, 15 Jun 2026 19:18:14 -0400
-Subject: [PATCH] lidslabs HDR transcode patches
+From 3fec50b7de23fa6931c9f291a4074b5eeda3bf60 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Sun, 21 Jun 2026 19:55:39 -0400
+Subject: [PATCH 1/2] lidslabs HDR transcode patches
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
