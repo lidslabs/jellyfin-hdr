@@ -1,0 +1,36 @@
+From bf902c46199218c108218340b36bb13ce0f2f7f0 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Mon, 22 Jun 2026 21:16:57 -0400
+Subject: [PATCH 3/3] lidslabs v0.3: log forced-HEVC gate inputs for
+ diagnostics
+
+---
+ Jellyfin.Api/Controllers/MediaInfoController.cs | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
+index 255610acee..e923a8fdca 100644
+--- a/Jellyfin.Api/Controllers/MediaInfoController.cs
++++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
+@@ -159,6 +159,18 @@ public class MediaInfoController : BaseJellyfinApiController
+                 Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_USER_AGENTS"))
+             && LidslabsProfileClaimsHevc(profile);
+ 
++        // lidslabs v0.3: diagnostic gate log. Emits the four gate inputs and
++        // the eligibility result on every PlaybackInfo POST so we can tell
++        // which gate failed when the override doesn't fire. Demote to
++        // LogDebug or remove once v0.3 is validated in production.
++        _logger.LogInformation(
++            "lidslabs.forceHevc gate: ua={UA}, csv={Csv}, hdrEnabled={HdrEnabled}, profileHevc={ProfileHevc}, eligible={Eligible}",
++            Request.Headers.UserAgent.ToString(),
++            Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_USER_AGENTS"),
++            LidslabsHdrTranscodeEnabled(),
++            profile is not null && LidslabsProfileClaimsHevc(profile),
++            lidslabsForceHevcEligible);
++
+         // Copy params from posted body
+         // TODO clean up when breaking API compatibility.
+         userId ??= playbackInfoDto?.UserId;
+-- 
+2.43.0
+
