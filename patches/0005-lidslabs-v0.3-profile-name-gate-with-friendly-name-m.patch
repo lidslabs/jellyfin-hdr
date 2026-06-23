@@ -1,7 +1,7 @@
 From 13962b6c1164ba40b02f1c31875a6ad7e3fd2d6e Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Tue, 23 Jun 2026 09:29:56 -0400
-Subject: [PATCH 5/5] lidslabs v0.3: profile-name gate with friendly-name
+Subject: [PATCH 5/6] lidslabs v0.3: profile-name gate with friendly-name
  mapping, drop diagnostic log
 
 ---
