@@ -1,0 +1,105 @@
+From 13962b6c1164ba40b02f1c31875a6ad7e3fd2d6e Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Tue, 23 Jun 2026 09:29:56 -0400
+Subject: [PATCH 5/5] lidslabs v0.3: profile-name gate with friendly-name
+ mapping, drop diagnostic log
+
+---
+ .../Controllers/MediaInfoController.cs        | 60 +++++++++++++------
+ 1 file changed, 41 insertions(+), 19 deletions(-)
+
+diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
+index e923a8fdca..2a2224d95a 100644
+--- a/Jellyfin.Api/Controllers/MediaInfoController.cs
++++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
+@@ -154,23 +154,11 @@ public class MediaInfoController : BaseJellyfinApiController
+         var lidslabsForceHevcEligible =
+             LidslabsHdrTranscodeEnabled()
+             && profile is not null
+-            && LidslabsUserAgentMatches(
+-                Request.Headers.UserAgent.ToString(),
+-                Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_USER_AGENTS"))
++            && LidslabsClientMatches(
++                profile.Name,
++                Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_CLIENTS"))
+             && LidslabsProfileClaimsHevc(profile);
+ 
+-        // lidslabs v0.3: diagnostic gate log. Emits the four gate inputs and
+-        // the eligibility result on every PlaybackInfo POST so we can tell
+-        // which gate failed when the override doesn't fire. Demote to
+-        // LogDebug or remove once v0.3 is validated in production.
+-        _logger.LogInformation(
+-            "lidslabs.forceHevc gate: ua={UA}, csv={Csv}, hdrEnabled={HdrEnabled}, profileHevc={ProfileHevc}, eligible={Eligible}",
+-            Request.Headers.UserAgent.ToString(),
+-            Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_USER_AGENTS"),
+-            LidslabsHdrTranscodeEnabled(),
+-            profile is not null && LidslabsProfileClaimsHevc(profile),
+-            lidslabsForceHevcEligible);
+-
+         // Copy params from posted body
+         // TODO clean up when breaking API compatibility.
+         userId ??= playbackInfoDto?.UserId;
+@@ -228,7 +216,8 @@ public class MediaInfoController : BaseJellyfinApiController
+                 }
+ 
+                 _logger.LogInformation(
+-                    "lidslabs: forced HEVC override fired for UA={UserAgent}, item={ItemId}",
++                    "lidslabs: forced HEVC override fired for profile={ProfileName}, ua={UserAgent}, item={ItemId}",
++                    profile.Name,
+                     Request.Headers.UserAgent.ToString(),
+                     itemId);
+             }
+@@ -313,14 +302,47 @@ public class MediaInfoController : BaseJellyfinApiController
+         static string[] LidslabsSplitTrim(string? value)
+             => (value ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+ 
+-        static bool LidslabsUserAgentMatches(string userAgent, string? csv)
++        // Maps user-facing client names (e.g. "neptune", "streamyfin") to the
++        // internal profile.Name substring(s) that identify each Jellyfin client
++        // mode. Keeps the env var ergonomic while letting us match the actual
++        // DeviceProfile field that distinguishes client modes from one another
++        // (Trident vs AV Player both ship in the Neptune app with the same UA
++        // but different profile.Name values).
++        //
++        // To add a verified-working client mode: add a switch arm mapping its
++        // friendly name to the distinguishing profile.Name substring. To
++        // disable a previously-supported client without breaking existing
++        // configs: comment out the arm — unmapped friendly names silently
++        // return false, equivalent to "this client mode no longer gets the
++        // override."
++        static bool LidslabsClientMatches(string? profileName, string? csv)
+         {
+-            if (string.IsNullOrEmpty(userAgent) || string.IsNullOrWhiteSpace(csv))
++            if (string.IsNullOrWhiteSpace(profileName) || string.IsNullOrWhiteSpace(csv))
+             {
+                 return false;
+             }
+ 
+-            return LidslabsSplitTrim(csv).Any(sub => userAgent.Contains(sub, StringComparison.OrdinalIgnoreCase));
++            foreach (var friendly in LidslabsSplitTrim(csv))
++            {
++                var matched = friendly.ToLowerInvariant() switch
++                {
++                    "neptune" => profileName.Contains("Trident", StringComparison.OrdinalIgnoreCase),
++                    "streamyfin" => profileName.Contains("1. MPV", StringComparison.OrdinalIgnoreCase),
++                    // "neptune_av" intentionally not mapped — Neptune AV Player
++                    //     declares HEVC HDR10 capability but cannot render HLS
++                    //     HEVC HDR10 streams in testing. Investigation lives
++                    //     on the feature/force-hevc-av-player-investigation
++                    //     branch; this arm gets added if/when that work lands.
++                    _ => false,
++                };
++
++                if (matched)
++                {
++                    return true;
++                }
++            }
++
++            return false;
+         }
+ 
+         static bool LidslabsProfileClaimsHevc(DeviceProfile p)
+-- 
+2.43.0
+

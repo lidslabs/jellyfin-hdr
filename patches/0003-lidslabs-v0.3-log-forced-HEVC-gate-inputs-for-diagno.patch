@@ -1,7 +1,7 @@
 From bf902c46199218c108218340b36bb13ce0f2f7f0 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Mon, 22 Jun 2026 21:16:57 -0400
-Subject: [PATCH 3/4] lidslabs v0.3: log forced-HEVC gate inputs for
+Subject: [PATCH 3/5] lidslabs v0.3: log forced-HEVC gate inputs for
  diagnostics
 
 ---
