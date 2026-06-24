@@ -1,0 +1,45 @@
+From 636c599583478e5d0238ffb9e7629f3fa27765d4 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Wed, 24 Jun 2026 14:29:10 -0400
+Subject: [PATCH 5/5] lidslabs v0.3: gate-decision diagnostic log (Debug) for
+ forced-HEVC hook
+
+Dormant Debug-level log at the forced-HEVC eligibility point. Silent in a
+default Information-level prod build; raise the level to Debug to resolve a
+"doesn't fire" report in one cycle instead of a rebuild. Dumps the gate
+inputs and the eligibility result. Scoped to the forced-HEVC hook (the
+HDR-toggle hook gate log is a follow-up). See DECISIONS.md.
+---
+ Jellyfin.Api/Controllers/MediaInfoController.cs | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
+index 24136ff6b6..260e203888 100644
+--- a/Jellyfin.Api/Controllers/MediaInfoController.cs
++++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
+@@ -159,6 +159,22 @@ public class MediaInfoController : BaseJellyfinApiController
+                 Environment.GetEnvironmentVariable("LIDSLABS_FORCE_HEVC_CLIENTS"))
+             && LidslabsProfileClaimsHevc(profile);
+ 
++        // lidslabs v0.3: gate-decision diagnostic log. Logs at Debug, so it is
++        // silent in a default (Information-level) build and emits nothing in
++        // production. Raise the log level to Debug to diagnose a "the override
++        // doesn't fire for client X" report in a single cycle — it dumps the
++        // gate inputs (profile name, configured client list, master toggle,
++        // HEVC capability) and the eligibility result, distinguishing "patch
++        // absent from build" from "a gate failed". See DECISIONS.md,
++        // "Diagnostic logging at the eligibility point".
++        _logger.LogDebug(
++            "lidslabs.forceHevc gate: profile={ProfileName}, clients={Clients}, hdrEnabled={HdrEnabled}, profileHevc={ProfileHevc}, eligible={Eligible}",
++            profile?.Name,
++            Environment.GetEnvironmentVariable("LIDSLABS_FORCE_HEVC_CLIENTS"),
++            LidslabsHdrTranscodeEnabled(),
++            profile is not null && LidslabsProfileClaimsHevc(profile),
++            lidslabsForceHevcEligible);
++
+         // Copy params from posted body
+         // TODO clean up when breaking API compatibility.
+         userId ??= playbackInfoDto?.UserId;
+-- 
+2.43.0
+

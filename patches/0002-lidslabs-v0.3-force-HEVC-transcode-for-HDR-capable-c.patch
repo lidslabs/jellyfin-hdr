@@ -1,46 +1,20 @@
-From 297f595ecb5091b95ce6b345342df1ab38c9ae9a Mon Sep 17 00:00:00 2001
+From 8aefa0070dd213e179aeeadca9667a08678bd739 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
-Date: Sun, 21 Jun 2026 19:56:02 -0400
-Subject: [PATCH 2/7] lidslabs: force HEVC transcode for HDR-capable clients
- that request AVC
+Date: Wed, 24 Jun 2026 14:27:50 -0400
+Subject: [PATCH 2/5] lidslabs v0.3: force HEVC transcode for HDR-capable
+ clients
 
-Several tvOS clients (Neptune in Apple-AV and Trident modes, Streamyfin)
-send DeviceProfiles requesting h264/SDR transcodes even though their
-players support HEVC/HDR10. The v0.2 HDR-passthrough path never engages
-for them, so HDR sources tonemap to SDR. Log analysis confirmed every
-ffmpeg invocation for these clients used h264_nvenc + tonemap_cuda.
-
-Add an opt-in, env-gated hook in MediaInfoController.GetPostedPlaybackInfo
-that prepends "hevc" to the video TranscodingProfiles before StreamBuilder
-consumes them, causing the unchanged v0.2 patches to preserve HDR10
-signaling through the NVENC re-encode.
-
-Gated on ALL of:
-  - JELLYFIN_ALLOW_HDR_TRANSCODE=1   (existing v0.2 master toggle)
-  - request UA matches LIDSLABS_TRANSCODER_FORCE_HEVC_USER_AGENTS
-  - at least one media source is HDR
-  - DeviceProfile declares HEVC somewhere (DirectPlay/Transcoding/
-    CodecProfile) -- safety check so we never force a codec the client
-    never advertised
-
-Eligibility (toggle/UA/profile) is computed right after profile
-resolution; the HDR-source check and the rewrite run after
-GetPlaybackInfo populates info.MediaSources, since the source's video
-range isn't known earlier. The rewrite mutates the shared profile once
-per request, correct for single-version library items.
-
-The codec tokenizer (split + trim + drop-empty) also fixes a pre-existing
-parse bug for clients sending "h264, hevc" with a leading space, which
-stock Jellyfin's split-without-trim silently drops the hevc token from.
-
-Preserves HDR10/HLG signaling only. Does NOT preserve Dolby Vision RPU
-NAL units: a forced DV Profile 7 source transcodes to HDR10, not DV.
+Rewrite the client's video TranscodingProfiles to prepend hevc when the
+client is HDR-capable and the source is HDR, so the HDR-passthrough path
+engages instead of h264 + tonemap-to-SDR. Gated on the HDR master toggle,
+a friendly-name -> DeviceProfile.Name substring mapping (neptune->Trident,
+streamyfin->'1. MPV'), and the client's declared HEVC capability.
 ---
- .../Controllers/MediaInfoController.cs        | 69 +++++++++++++++++++
- 1 file changed, 69 insertions(+)
+ .../Controllers/MediaInfoController.cs        | 103 ++++++++++++++++++
+ 1 file changed, 103 insertions(+)
 
 diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
-index f22ac0b73a..255610acee 100644
+index f22ac0b73a..2a2224d95a 100644
 --- a/Jellyfin.Api/Controllers/MediaInfoController.cs
 +++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
 @@ -8,11 +8,13 @@ using Jellyfin.Api.Attributes;
@@ -67,15 +41,15 @@ index f22ac0b73a..255610acee 100644
 +        var lidslabsForceHevcEligible =
 +            LidslabsHdrTranscodeEnabled()
 +            && profile is not null
-+            && LidslabsUserAgentMatches(
-+                Request.Headers.UserAgent.ToString(),
-+                Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_USER_AGENTS"))
++            && LidslabsClientMatches(
++                profile.Name,
++                Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_CLIENTS"))
 +            && LidslabsProfileClaimsHevc(profile);
 +
          // Copy params from posted body
          // TODO clean up when breaking API compatibility.
          userId ??= playbackInfoDto?.UserId;
-@@ -188,6 +201,26 @@ public class MediaInfoController : BaseJellyfinApiController
+@@ -188,6 +201,27 @@ public class MediaInfoController : BaseJellyfinApiController
  
          if (profile is not null)
          {
@@ -94,7 +68,8 @@ index f22ac0b73a..255610acee 100644
 +                }
 +
 +                _logger.LogInformation(
-+                    "lidslabs: forced HEVC override fired for UA={UserAgent}, item={ItemId}",
++                    "lidslabs: forced HEVC override fired for profile={ProfileName}, ua={UserAgent}, item={ItemId}",
++                    profile.Name,
 +                    Request.Headers.UserAgent.ToString(),
 +                    itemId);
 +            }
@@ -102,7 +77,7 @@ index f22ac0b73a..255610acee 100644
              // set device specific data
              foreach (var mediaSource in info.MediaSources)
              {
-@@ -246,6 +279,42 @@ public class MediaInfoController : BaseJellyfinApiController
+@@ -246,6 +280,75 @@ public class MediaInfoController : BaseJellyfinApiController
          }
  
          return info;
@@ -128,14 +103,47 @@ index f22ac0b73a..255610acee 100644
 +        static string[] LidslabsSplitTrim(string? value)
 +            => (value ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 +
-+        static bool LidslabsUserAgentMatches(string userAgent, string? csv)
++        // Maps user-facing client names (e.g. "neptune", "streamyfin") to the
++        // internal profile.Name substring(s) that identify each Jellyfin client
++        // mode. Keeps the env var ergonomic while letting us match the actual
++        // DeviceProfile field that distinguishes client modes from one another
++        // (Trident vs AV Player both ship in the Neptune app with the same UA
++        // but different profile.Name values).
++        //
++        // To add a verified-working client mode: add a switch arm mapping its
++        // friendly name to the distinguishing profile.Name substring. To
++        // disable a previously-supported client without breaking existing
++        // configs: comment out the arm — unmapped friendly names silently
++        // return false, equivalent to "this client mode no longer gets the
++        // override."
++        static bool LidslabsClientMatches(string? profileName, string? csv)
 +        {
-+            if (string.IsNullOrEmpty(userAgent) || string.IsNullOrWhiteSpace(csv))
++            if (string.IsNullOrWhiteSpace(profileName) || string.IsNullOrWhiteSpace(csv))
 +            {
 +                return false;
 +            }
 +
-+            return LidslabsSplitTrim(csv).Any(sub => userAgent.Contains(sub, StringComparison.OrdinalIgnoreCase));
++            foreach (var friendly in LidslabsSplitTrim(csv))
++            {
++                var matched = friendly.ToLowerInvariant() switch
++                {
++                    "neptune" => profileName.Contains("Trident", StringComparison.OrdinalIgnoreCase),
++                    "streamyfin" => profileName.Contains("1. MPV", StringComparison.OrdinalIgnoreCase),
++                    // "neptune_av" intentionally not mapped — Neptune AV Player
++                    //     declares HEVC HDR10 capability but cannot render HLS
++                    //     HEVC HDR10 streams in testing. Investigation lives
++                    //     on the feature/force-hevc-av-player-investigation
++                    //     branch; this arm gets added if/when that work lands.
++                    _ => false,
++                };
++
++                if (matched)
++                {
++                    return true;
++                }
++            }
++
++            return false;
 +        }
 +
 +        static bool LidslabsProfileClaimsHevc(DeviceProfile p)
