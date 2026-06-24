@@ -1,11 +1,25 @@
 # Changelog
-## [0.3.0+jellyfin-10.11.11] - 2026-06-23
+## [0.3.0+jellyfin-10.11.11] - 2026-06-24
 
 Forced HEVC override for HDR-capable Apple TV clients (Neptune Trident,
 Streamyfin) that advertise HEVC + HDR10 capability but request h264 + SDR
 transcodes. Audio compatibility-track redirect widened from HLS-only to
 HLS or Progressive transcode outputs. Project-owned env vars unified
 under the `LIDSLABS_*` prefix.
+
+### Highlights
+- **Native-4K HDR10 on HDR-capable Apple TV clients.** Neptune Trident and
+  Streamyfin now receive HEVC HDR10 instead of h264 SDR — Trident goes from
+  1440p SDR to native 4K HDR10 at the same bitrate cap (HEVC's efficiency
+  brings the resolution win along with the HDR win).
+- **Audio compat redirect now covers Progressive output, not just HLS** —
+  Neptune Trident's MKV-over-HTTP path gets full-surround AC3 stream-copy
+  instead of lossy AAC downmix.
+- **⚠️ Breaking:** `JELLYFIN_ALLOW_HDR_TRANSCODE` is renamed to
+  `LIDSLABS_ALLOW_HDR_TRANSCODE`. **Update your compose env var before pulling
+  this image** — the old name is silently ignored and the HDR gate defaults off.
+- New `LIDSLABS_FORCE_HEVC_CLIENTS` env var selects which clients get the
+  override (friendly names: `neptune`, `streamyfin`).
 
 ### Added
 - **Forced HEVC override on PlaybackInfo.** New hook in
@@ -25,10 +39,11 @@ under the `LIDSLABS_*` prefix.
   substitution in `EncodingHelper.cs` was widened from `Hls`-only to
   `Hls || Progressive`. Neptune Trident's MKV-over-HTTP path now receives
   the AC3 sidecar substitution that v0.2 only delivered on HLS.
-- **Gate-decision diagnostic logging.** All env-gated lidslabs hooks log
-  their gate inputs and result at the eligibility evaluation point. Set
-  to DEBUG by default; promote to INFO when actively debugging a
-  "doesn't fire" report.
+- **Gate-decision diagnostic logging.** The forced-HEVC hook logs its gate
+  inputs and eligibility result at the evaluation point, at `Debug` level —
+  dormant in a default (Information-level) build, so it emits nothing in
+  production. Raise the log level to Debug to diagnose a "doesn't fire"
+  report in one cycle instead of a rebuild.
 
 ### Changed
 - **Env var rename:** `JELLYFIN_ALLOW_HDR_TRANSCODE` is now

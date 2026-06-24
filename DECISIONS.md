@@ -52,8 +52,14 @@ Status: Shipped.
 - **Principle (new):** every env-gated lidslabs hook ships with a
   gate-decision log at the eligibility point, dumping all gate inputs and
   the result. Cost: one line. Benefit: every future "doesn't fire" debug
-  session resolves in one cycle instead of two. Demote to DEBUG once the
-  feature is validated; never delete.
+  session resolves in one cycle instead of two. Demote to Debug once the
+  feature is validated; never delete. ("Demote to Debug" makes the line
+  dormant in a default Information-level build — it is a diagnostic hook,
+  not prod logging.)
+- **As shipped in v0.3.0:** the forced-HEVC hook carries this log at Debug.
+  An earlier dev iteration deleted it during a gate refactor; it was
+  restored before release to honor the principle. The HDR-toggle hook does
+  not have one yet (deferred).
 
 ### What we explicitly did NOT do
 - No DASH support in the audio redirect path. No test target, and the splash
@@ -201,6 +207,39 @@ grep a wasted lookup.
 
 ---
 
+## Versioning policy — patch-layer semver vs. upstream build metadata
+
+Status: Adopted v0.3.0.
+
+### The rule
+A release tag is `v{PATCH_LAYER_SEMVER}+jellyfin-{UPSTREAM_VERSION}`. The two
+parts version different things and move independently:
+- **`PATCH_LAYER_SEMVER`** (before `+`) versions the lidslabs patch layer only —
+  the C# changes carried in `patches/`. It follows semver: MINOR for new
+  features or breaking changes (pre-1.0), PATCH for backwards-compatible fixes.
+- **`+jellyfin-X.Y.Z`** is semver *build metadata*. It records which upstream
+  Jellyfin tag the patches are pinned to. Per the semver spec, build metadata is
+  ignored for precedence — `0.1.0+jellyfin-10.11.10` and `0.1.0+jellyfin-10.11.11`
+  are the *same* patch-layer version.
+
+### Consequence
+An upstream-only rebase that does not change the patch layer (the same patches
+re-applied onto a new Jellyfin tag, no `.cs` behavior change) bumps **only** the
+`+jellyfin-X.Y.Z` suffix. The patch-layer semver does not move.
+
+### What this corrects
+v0.2.0 was tagged `0.2.0+jellyfin-10.11.11` for what was purely an upstream-pin
+bump from 10.11.10 → 10.11.11 with no patch-layer change — its own CHANGELOG
+entry says "No changes to lidslabs patch layer." Under this rule that release
+should have been `0.1.0+jellyfin-10.11.11`, a build-metadata change only. The
+0.2.0 tag is published, deployed, and immutable, so it stands; the minor number
+it consumed is a one-time gap, not repaid by under-numbering a later release.
+v0.3.0 carries real features plus a breaking env-var rename, so it is a genuine
+minor — numbered straight to 0.3.0 rather than back-filling 0.2.x (a patch
+number would misrepresent the breaking change).
+
+---
+
 ## v0.3.0 — Bitrate calibration: Apple HEVC clients
 
 ### Measurements
@@ -272,8 +311,10 @@ Supersedes all earlier running matrices. This is the v0.3.0 ship state.
 - Audio compat widened to HLS or Progressive transcode outputs.
 - AC3/E-AC3 substitution trusted as universally container-portable; no
   per-request capability gate.
-- Every env-gated hook ships with a gate-decision log at the eligibility
-  evaluation point (demoted to DEBUG before release).
+- The forced-HEVC hook ships a gate-decision log at the eligibility
+  evaluation point, at Debug level (dormant in a default Information-level
+  prod build; raise the level to diagnose a "doesn't fire" report in one
+  cycle). The HDR-toggle hook does not have one yet — deferred (below).
 - Project-owned env vars use the `LIDSLABS_*` prefix.
 
 ### Deferred to v0.3.1 or later
@@ -288,3 +329,6 @@ Supersedes all earlier running matrices. This is the v0.3.0 ship state.
   into a single shared utility (currently in both `EncodingHelper.cs`
   and `MediaInfoController.cs`). Out of v0.3.0 scope; flagged as a
   refactor target.
+- Extending the gate-decision Debug log to the HDR-toggle hook so every
+  env-gated hook honors the diagnostic-logging principle (forced-HEVC hook
+  has it; HDR passthrough predates the principle).
