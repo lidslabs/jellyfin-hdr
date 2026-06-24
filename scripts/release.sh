@@ -6,6 +6,13 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+    echo "ERROR: releases are cut from main, but HEAD is '$CURRENT_BRANCH'." >&2
+    echo "Merge the feature branch into main (via PR), then re-run from main." >&2
+    exit 1
+fi
+
 if [[ -n "$(git status --porcelain)" ]]; then
     echo "ERROR: working tree dirty. Commit pin file changes first." >&2
     git status --short >&2
@@ -25,7 +32,7 @@ if [[ ! "$TAG" =~ -(rc|alpha|beta|dev)\. ]]; then
     echo "==> $TAG is a NORMAL release (will appear as 'Latest' on GitHub)."
     read -r -p "==> Continue? [y/N] " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-        echo "Aborted. Bump VERSION to e.g. ${VERSION%-*}-rc.1 for a pre-release." >&2
+        echo "Aborted. Bump VERSION to e.g. ${LIDSLABS_VERSION%-*}-rc.1 for a pre-release." >&2
         exit 0
     fi
 fi
