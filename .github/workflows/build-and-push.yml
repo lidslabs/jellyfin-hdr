@@ -71,19 +71,42 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Build release notes
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+          ver="${tag#v}"             # strip leading v: v0.3.0+jellyfin-X -> 0.3.0+jellyfin-X
+          img_tag="${tag//+/-}"      # docker-sanitized image tag (matches release.sh)
+
+          {
+            echo "## Pull"
+            echo
+            echo "Docker image tag (the git tag's \`+\` is sanitized to \`-\`):"
+            echo
+            echo "    docker pull ghcr.io/${repo}:${img_tag}"
+            echo
+          } > RELEASE_NOTES.md
+
+          # Consumer digest: the matching CHANGELOG entry's lead paragraph plus its
+          # optional '### Highlights' block. Stops at the first non-Highlights '###'
+          # subsection, so the granular Added/Changed/Fixed detail stays in
+          # CHANGELOG.md and out of the release notes. Empty if the tag has no entry.
+          digest="$(awk -v ver="[$ver]" '
+            /^## \[/ { if (found) exit; if (index($0, ver)) found=1; next }
+            found && /^###[[:space:]]+/ && $0 !~ /^###[[:space:]]+Highlights/ { exit }
+            found { print }
+          ' CHANGELOG.md)"
+
+          if [[ -n "${digest//[[:space:]]/}" ]]; then
+            printf '%s\n\n' "$digest" >> RELEASE_NOTES.md
+          fi
+          echo "— Full detail in [CHANGELOG.md](https://github.com/${repo}/blob/main/CHANGELOG.md) —" >> RELEASE_NOTES.md
+
       - name: Create GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
-          body: |
-            ## Pull
-
-            Docker image tag (note: the git tag's `+` becomes `-` per Docker tag rules):
-
-                docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-
-            ## Changes
-
-            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for the full history.
+          body_path: RELEASE_NOTES.md
