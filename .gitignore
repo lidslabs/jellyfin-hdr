@@ -3,3 +3,7 @@
 .vscode/
 .idea/
 jellyfin/
+
+# Private, local-only Claude Code memory (never push)
+CLAUDE.md
+.project/
