@@ -27,7 +27,7 @@ tags substitute `-` because `+` is not a valid Docker tag character.
 ## Enable HDR transcoding
 
 Set in container environment:
-JELLYFIN_ALLOW_HDR_TRANSCODE=1
+LIDSLABS_ALLOW_HDR_TRANSCODE=1
 
 Default is `0` (stock Jellyfin tonemap-to-SDR behavior). When enabled, HDR10
 / HDR10+ / HLG sources transcoded to HEVC or AV1 retain their HDR metadata
@@ -78,7 +78,7 @@ preserves the surround mix without re-encoding.
 ### Current status
 
 The feature is always-on in this release. A future release is planned to add
-a Jellyfin admin UI toggle (and an env var fallback like `JELLYFIN_ALLOW_HDR_TRANSCODE`)
+a Jellyfin admin UI toggle (and an env var fallback like `LIDSLABS_ALLOW_HDR_TRANSCODE`)
 so it can be opted out of per-server. 
 
 ## Source and provenance

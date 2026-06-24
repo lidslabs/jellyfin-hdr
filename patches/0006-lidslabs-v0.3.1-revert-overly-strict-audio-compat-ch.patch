@@ -1,7 +1,7 @@
 From 6e02d54e13d91cc9e1c79e9e9df81b0877801d7b Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Tue, 23 Jun 2026 18:59:51 -0400
-Subject: [PATCH 6/6] lidslabs v0.3.1: revert overly-strict audio compat check
+Subject: [PATCH 6/7] lidslabs v0.3.1: revert overly-strict audio compat check
  that blocked Streamyfin
 
 ---

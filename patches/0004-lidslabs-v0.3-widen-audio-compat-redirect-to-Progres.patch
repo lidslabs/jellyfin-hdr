@@ -1,7 +1,7 @@
 From dc514d53e8c9b53c3910b146b58f497115580615 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Mon, 22 Jun 2026 23:46:11 -0400
-Subject: [PATCH 4/6] lidslabs v0.3: widen audio compat redirect to
+Subject: [PATCH 4/7] lidslabs v0.3: widen audio compat redirect to
  Progressive, add client codec gate
 
 ---

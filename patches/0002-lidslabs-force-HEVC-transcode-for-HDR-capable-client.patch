@@ -1,7 +1,7 @@
 From 297f595ecb5091b95ce6b345342df1ab38c9ae9a Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Sun, 21 Jun 2026 19:56:02 -0400
-Subject: [PATCH 2/6] lidslabs: force HEVC transcode for HDR-capable clients
+Subject: [PATCH 2/7] lidslabs: force HEVC transcode for HDR-capable clients
  that request AVC
 
 Several tvOS clients (Neptune in Apple-AV and Trident modes, Streamyfin)
