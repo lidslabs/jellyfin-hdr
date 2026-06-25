@@ -55,14 +55,20 @@ services:
     image: ghcr.io/lidslabs/jellyfin-hdr:v0.3.0-jellyfin-10.11.11
     container_name: jellyfin
     restart: unless-stopped
-    runtime: nvidia                 # requires the NVIDIA Container Toolkit
+    # GPU via the NVIDIA Container Toolkit (Compose device reservation):
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]     # pin a GPU; or use `count: all`
+              capabilities: [gpu]
     environment:
       # --- lidslabs custom (see the table above) ---
       LIDSLABS_ALLOW_HDR_TRANSCODE: "1"                 # master toggle — required
       LIDSLABS_FORCE_HEVC_CLIENTS: "neptune,streamyfin" # optional; forced-HEVC override
-      # --- standard NVIDIA passthrough ---
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: all
+      # --- NVENC capabilities exposed to the container ---
+      NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
       TZ: America/New_York
     ports:
       - "8096:8096"

@@ -5,7 +5,7 @@
 #
 # Prerequisites:
 #   - NVIDIA GPU + driver on the host
-#   - NVIDIA Container Toolkit installed, with `nvidia` registered as a Docker runtime
+#   - NVIDIA Container Toolkit installed and configured for Docker
 #   - In Jellyfin: Dashboard -> Playback -> Transcoding -> Hardware acceleration = NVENC,
 #     with HEVC encoding enabled
 
@@ -14,7 +14,15 @@ services:
     image: ghcr.io/lidslabs/jellyfin-hdr:v0.3.0-jellyfin-10.11.11  # pin a version; avoid :latest in prod
     container_name: jellyfin
     restart: unless-stopped
-    runtime: nvidia                 # requires the NVIDIA Container Toolkit
+    # GPU via the NVIDIA Container Toolkit (Compose device reservation —
+    # the current method; no `runtime: nvidia` needed).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]     # pin a specific GPU; or use `count: all`
+              capabilities: [gpu]
     environment:
       # --- lidslabs custom (see README "Configuration") ---
       # Master toggle. REQUIRED — without this, the image behaves like stock
@@ -23,9 +31,8 @@ services:
       # Optional. Comma-separated friendly client names forced onto an HEVC
       # transcode for HDR sources. Recognized: neptune, streamyfin.
       LIDSLABS_FORCE_HEVC_CLIENTS: "neptune,streamyfin"
-      # --- standard NVIDIA passthrough ---
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: all
+      # NVENC capabilities the toolkit exposes to the container.
+      NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
       TZ: America/New_York
     ports:
       - "8096:8096"
