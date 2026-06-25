@@ -1,0 +1,85 @@
+From b8fa8ff961dc94623bec76aa2b7c5430a5a87516 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Tue, 23 Jun 2026 20:48:07 -0400
+Subject: [PATCH 4/5] lidslabs v0.3: rename env vars to LIDSLABS_* namespace
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+JELLYFIN_ALLOW_HDR_TRANSCODE -> LIDSLABS_ALLOW_HDR_TRANSCODE
+LIDSLABS_TRANSCODER_FORCE_HEVC_CLIENTS -> LIDSLABS_FORCE_HEVC_CLIENTS
+
+Reserves JELLYFIN_* for upstream-controlled config; everything
+lidslabs-owned is now under LIDSLABS_*. EncodingJobInfo.cs change
+is a doc-comment update only — no behavior delta.
+
+Breaking change for existing deployments — compose env vars must be
+updated before redeploying the new image.
+---
+ Jellyfin.Api/Controllers/MediaInfoController.cs          | 4 ++--
+ MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs  | 6 +++---
+ MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs | 2 +-
+ 3 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
+index 2a2224d95a..24136ff6b6 100644
+--- a/Jellyfin.Api/Controllers/MediaInfoController.cs
++++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
+@@ -156,7 +156,7 @@ public class MediaInfoController : BaseJellyfinApiController
+             && profile is not null
+             && LidslabsClientMatches(
+                 profile.Name,
+-                Environment.GetEnvironmentVariable("LIDSLABS_TRANSCODER_FORCE_HEVC_CLIENTS"))
++                Environment.GetEnvironmentVariable("LIDSLABS_FORCE_HEVC_CLIENTS"))
+             && LidslabsProfileClaimsHevc(profile);
+ 
+         // Copy params from posted body
+@@ -289,7 +289,7 @@ public class MediaInfoController : BaseJellyfinApiController
+         // features must agree on what "on" means or the override fragments silently.
+         static bool LidslabsHdrTranscodeEnabled()
+         {
+-            var envFlag = Environment.GetEnvironmentVariable("JELLYFIN_ALLOW_HDR_TRANSCODE");
++            var envFlag = Environment.GetEnvironmentVariable("LIDSLABS_ALLOW_HDR_TRANSCODE");
+             if (string.IsNullOrEmpty(envFlag))
+             {
+                 return false;
+diff --git a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+index 217e833295..8c48c95fd6 100644
+--- a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
++++ b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+@@ -6383,7 +6383,7 @@ namespace MediaBrowser.Controller.MediaEncoding
+         // ====================================================================
+         // Returns true when the encoder pipeline should preserve HDR rather
+         // than tonemap to SDR. Gated on environment variable
+-        // JELLYFIN_ALLOW_HDR_TRANSCODE=1 for safe rollout. Once verified, this
++        // LIDSLABS_ALLOW_HDR_TRANSCODE=1 for safe rollout. Once verified, this
+         // gate will move to EncodingOptions.AllowHdrTranscoding and become a
+         // user-toggleable setting in the admin dashboard.
+         //
+@@ -6458,8 +6458,8 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 return false;
+             }
+ 
+-            // Environment-variable gate. Set JELLYFIN_ALLOW_HDR_TRANSCODE=1 to enable.
+-            var envFlag = Environment.GetEnvironmentVariable("JELLYFIN_ALLOW_HDR_TRANSCODE");
++            // Environment-variable gate. Set LIDSLABS_ALLOW_HDR_TRANSCODE=1 to enable.
++            var envFlag = Environment.GetEnvironmentVariable("LIDSLABS_ALLOW_HDR_TRANSCODE");
+             if (string.IsNullOrEmpty(envFlag))
+             {
+                 return false;
+diff --git a/MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs b/MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs
+index eeae3e42b4..03de7ca17f 100644
+--- a/MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs
++++ b/MediaBrowser.Controller/MediaEncoding/EncodingJobInfo.cs
+@@ -401,7 +401,7 @@ namespace MediaBrowser.Controller.MediaEncoding
+         /// <remarks>
+         /// Convenience wrapper around <see cref="EncodingHelper.IsHdrPassthroughMode(EncodingJobInfo)"/>
+         /// so other components can query encoding state without taking a hard dependency
+-        /// on EncodingHelper. Currently gated on the <c>JELLYFIN_ALLOW_HDR_TRANSCODE</c>
++        /// on EncodingHelper. Currently gated on the <c>LIDSLABS_ALLOW_HDR_TRANSCODE</c>
+         /// environment variable.
+         /// </remarks>
+         public bool IsHdrTranscoding => EncodingHelper.IsHdrPassthroughMode(this);
+-- 
+2.43.0
+

@@ -86,4 +86,4 @@ COPY --from=builder /publish/MediaBrowser.Controller.dll /jellyfin/MediaBrowser.
 COPY --from=builder /publish/Jellyfin.Api.dll            /jellyfin/Jellyfin.Api.dll
 
 # HDR transcode is opt-in via env. Default is stock Jellyfin behavior.
-ENV JELLYFIN_ALLOW_HDR_TRANSCODE=0
+ENV LIDSLABS_ALLOW_HDR_TRANSCODE=0
