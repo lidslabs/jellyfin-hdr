@@ -3,7 +3,7 @@
 #
 # Two modes:
 #   1. Dev loop (auto-pin) - pass a fork ref to pin + regenerate in one step:
-#        ./scripts/regen-patches.sh lidslabs/force-hevc-clients
+#        ./scripts/regen-patches.sh lidslabs/10.11.x
 #      Resolves the ref in the fork, writes its SHA to JELLYFIN_REF, then regenerates.
 #   2. Reproducible - no argument, use the committed JELLYFIN_REF as-is:
 #        ./scripts/regen-patches.sh

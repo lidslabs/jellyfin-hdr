@@ -61,6 +61,21 @@ Status: Shipped.
   restored before release to honor the principle. The HDR-toggle hook does
   not have one yet (deferred).
 
+### The forced-client list is temporary scaffolding
+- `LIDSLABS_FORCE_HEVC_CLIENTS` and its friendly-name mapping exist only to work
+  around clients that advertise HEVC + HDR10 capability but request an h264 + SDR
+  transcode. Each entry is a patch over a specific client's wrong default codec
+  ordering — not a permanent feature.
+- **Exit criterion:** when a listed client starts requesting HEVC HDR by default —
+  as Swiftfin and Wholphin already do — it no longer needs the override. Remove it
+  from the mapping; the standard HDR passthrough path then carries HDR for it with
+  no forcing.
+- **Expectation:** this list should *shrink* over time as client apps fix their
+  defaults, not grow. A steadily growing forced list is a smell worth questioning.
+- **Cadence:** revisit the list when rebasing onto a new upstream Jellyfin tag and
+  when a listed client ships a notable app update — re-test whether it still needs
+  forcing, and graduate it out if not. Tracked as a recurring backlog item.
+
 ### What we explicitly did NOT do
 - No DASH support in the audio redirect path. No test target, and the splash
   retrospective discipline says don't widen what we can't validate.

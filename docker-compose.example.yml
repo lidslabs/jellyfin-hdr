@@ -1,0 +1,35 @@
+# Example docker-compose for ghcr.io/lidslabs/jellyfin-hdr
+#
+# Copy to docker-compose.yml and adjust paths, timezone, and the env vars.
+# See the README "Configuration" section for what each LIDSLABS_* variable does.
+#
+# Prerequisites:
+#   - NVIDIA GPU + driver on the host
+#   - NVIDIA Container Toolkit installed, with `nvidia` registered as a Docker runtime
+#   - In Jellyfin: Dashboard -> Playback -> Transcoding -> Hardware acceleration = NVENC,
+#     with HEVC encoding enabled
+
+services:
+  jellyfin:
+    image: ghcr.io/lidslabs/jellyfin-hdr:v0.3.0-jellyfin-10.11.11  # pin a version; avoid :latest in prod
+    container_name: jellyfin
+    restart: unless-stopped
+    runtime: nvidia                 # requires the NVIDIA Container Toolkit
+    environment:
+      # --- lidslabs custom (see README "Configuration") ---
+      # Master toggle. REQUIRED — without this, the image behaves like stock
+      # Jellyfin (tonemap-to-SDR) and the forced-HEVC override never fires.
+      LIDSLABS_ALLOW_HDR_TRANSCODE: "1"
+      # Optional. Comma-separated friendly client names forced onto an HEVC
+      # transcode for HDR sources. Recognized: neptune, streamyfin.
+      LIDSLABS_FORCE_HEVC_CLIENTS: "neptune,streamyfin"
+      # --- standard NVIDIA passthrough ---
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+      TZ: America/New_York
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./config:/config
+      - ./cache:/cache
+      - /path/to/media:/media:ro
