@@ -39,4 +39,5 @@ services:
     volumes:
       - ./config:/config
       - ./cache:/cache
-      - /path/to/media:/media:ro
+      # rw (default) so Jellyfin can write posters / NFO / trickplay alongside media.
+      - /path/to/media:/media

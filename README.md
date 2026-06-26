@@ -75,7 +75,7 @@ services:
     volumes:
       - ./config:/config
       - ./cache:/cache
-      - /path/to/media:/media:ro
+      - /path/to/media:/media        # rw: Jellyfin writes posters / NFO / trickplay alongside media
 ```
 
 > **Pin a specific version tag** (as above) rather than `:latest`. This image
