@@ -38,8 +38,9 @@ tags substitute `-` because `+` is not a valid Docker tag character.
 | --- | --- | --- | --- |
 | `LIDSLABS_ALLOW_HDR_TRANSCODE` | `0` | **Master toggle — everything** | Accepts `1` or `true` (case-insensitive). Turns on HDR10 / HDR10+ / HLG passthrough during transcode. Also gates the forced-HEVC override below — if this is off, that never fires. |
 | `LIDSLABS_FORCE_HEVC_CLIENTS` | _(unset)_ | Forced-HEVC override | Comma-separated friendly client names to force onto an HEVC transcode for HDR sources (e.g. `neptune,streamyfin`). No effect unless the master toggle is on. See [Forced HEVC for HDR-capable clients](#forced-hevc-for-hdr-capable-clients). |
+| `LIDSLABS_FORCE_HLS_CLIENTS` | _(unset)_ | Forced-HLS transport | Comma-separated friendly client names (same mapping as above) whose **progressive** video transcodes are flipped to **HLS**. For clients that only advertise HEVC on a progressive profile (e.g. Neptune Trident), progressive playback buffers heavily before it starts (~10 s vs ~5 s on HLS). Forcing HLS lets the player start after the first segment. See [Forcing HLS transport](#forcing-hls-transport). |
 
-These two variables are the only ones this image adds — everything else is stock
+These three variables are the only ones this image adds — everything else is stock
 Jellyfin plus the standard NVIDIA runtime variables. NVENC/CUDA requires the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 on the host, and HEVC hardware encoding enabled in
@@ -112,6 +113,25 @@ over time**: a client only belongs here while it mis-declares its codec
 preference. Once it requests HEVC HDR by default (as Swiftfin and Wholphin
 already do), it should be removed — the standard HDR passthrough then handles it
 without the override.
+
+### Forcing HLS transport
+
+A few clients only advertise HEVC on a **progressive** (`http`) transcoding
+profile while restricting their HLS profile to h264 — Neptune **Trident** is the
+notable case (`mkv`/http = HEVC, `mp4`/hls = h264 only). Their HEVC transcode
+therefore streams progressively, and the player buffers a large chunk of that
+continuous stream before it starts (~10 s measured), where HLS clients begin
+after the first segment (~5 s).
+
+`LIDSLABS_FORCE_HLS_CLIENTS` flips the matched client's progressive video
+transcoding profiles to HLS (container normalized to `ts`), using the same
+friendly-name mapping as the HEVC override. Pair it with `LIDSLABS_FORCE_HEVC_CLIENTS`
+so the flipped profile still carries HEVC (e.g. `LIDSLABS_FORCE_HLS_CLIENTS=neptune`).
+
+> ⚠️ This forces HLS+HEVC on a client that did **not** advertise it, so it must
+> be verified on the actual device — a player that decodes HEVC fine over
+> progressive may or may not render it over HLS. Only add a client here after
+> confirming playback.
 
 ## HDR transcoding
 

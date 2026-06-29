@@ -1,4 +1,17 @@
 # Changelog
+## [Unreleased]
+
+### Added
+- **`LIDSLABS_FORCE_HLS_CLIENTS` (forced-HLS transport).** Comma-separated
+  friendly client names (same mapping as `LIDSLABS_FORCE_HEVC_CLIENTS`) whose
+  progressive (`http`) video transcoding profiles are flipped to HLS (container
+  normalized to `ts`) in `MediaInfoController.GetPostedPlaybackInfo`. Targets
+  clients that only advertise HEVC on a progressive profile (e.g. Neptune
+  Trident), whose progressive playback buffers ~10 s before starting vs ~5 s on
+  HLS. Unset by default; runs after the forced-HEVC rewrite so a flipped profile
+  still carries HEVC. **Note:** forces HLS+HEVC on clients that didn't advertise
+  it, so it requires per-client on-device validation. See `README.md`.
+
 ## [0.3.0+jellyfin-10.11.11] - 2026-06-24
 
 Forced HEVC override for HDR-capable Apple TV clients (Neptune Trident,
