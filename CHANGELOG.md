@@ -1,5 +1,24 @@
 # Changelog
-## [Unreleased]
+## [0.3.1+jellyfin-10.11.11] - 2026-06-29
+
+Bug-fix release: eliminates a ~6 s black-screen warmup at the start of
+**every** NVENC transcode on Nvidia GPUs newer than jellyfin-ffmpeg's bundled
+`scale_cuda` kernels (Blackwell / RTX 50-series, sm_120). The image now
+persists the NVIDIA CUDA JIT cache to the `/config` volume so the kernel
+compiles once, ever, instead of on every playback. No patch-layer change —
+same Jellyfin fork commit as v0.3.0; Dockerfile-only, always on, no
+configuration required.
+
+### Highlights
+- **~6 s faster transcode start on newer Nvidia GPUs (RTX 50-series /
+  Blackwell).** First HLS segment measured 9.46 s → 3.52 s on an RTX 5080.
+- **One-time cost.** The `scale_cuda` kernel is JIT-compiled once and the
+  result persists on the `/config` volume across container restarts.
+- **No configuration needed** — the fix is baked into the image and always
+  on. Operators with a read-only `/config` can override `CUDA_CACHE_PATH`.
+- **Older GPUs unaffected** (their kernels are precompiled; no JIT step).
+- **No patch-layer change** — same fork commit and 5-patch series as v0.3.0;
+  this is a Dockerfile `ENV` addition only.
 
 ### Fixed
 - **Faster transcode start on newer GPUs (CUDA JIT cache).** The image now sets
