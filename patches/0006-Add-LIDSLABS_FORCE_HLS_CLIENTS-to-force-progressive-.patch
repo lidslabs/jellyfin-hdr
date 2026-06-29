@@ -1,0 +1,95 @@
+From 6b1b2016661c0efe8fc5c7296774c3fcd8bc6166 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Sun, 28 Jun 2026 23:44:58 -0400
+Subject: [PATCH 6/6] Add LIDSLABS_FORCE_HLS_CLIENTS to force progressive
+ clients onto HLS
+
+Some clients only advertise HEVC on a progressive (http) transcoding profile and
+restrict their HLS profile to h264 (e.g. Neptune Trident: mkv/http=hevc,
+mp4/hls=h264). Their HEVC HDR transcode therefore goes progressive, which the
+player buffers heavily (~10s measured) before playback starts, while HLS clients
+start after the first segment (~5s).
+
+Add a transport lever in MediaInfoController.GetPostedPlaybackInfo, mirroring the
+forced-HEVC override: for clients listed in LIDSLABS_FORCE_HLS_CLIENTS (reusing
+the same friendly-name -> profile.Name mapping), flip their video transcoding
+profiles from http to hls and normalize the container to ts. Runs after the
+forced-HEVC rewrite, so a flipped profile already carries hevc when that override
+is also active. Source-independent; off when the env var is unset. Carries a
+Debug gate-decision log plus an Information "fired" log, per the logging principle.
+
+Note: this forces HLS+HEVC on clients that did not advertise it (Trident lists
+HLS as h264-only), so it must be validated on-device per client.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+---
+ .../Controllers/MediaInfoController.cs        | 46 +++++++++++++++++++
+ 1 file changed, 46 insertions(+)
+
+diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
+index 260e203888..3af3f98f88 100644
+--- a/Jellyfin.Api/Controllers/MediaInfoController.cs
++++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
+@@ -175,6 +175,27 @@ public class MediaInfoController : BaseJellyfinApiController
+             profile is not null && LidslabsProfileClaimsHevc(profile),
+             lidslabsForceHevcEligible);
+ 
++        // lidslabs: forced-HLS override — transport lever, source-independent.
++        // Some clients only advertise HEVC on a progressive (http) transcoding
++        // profile and restrict their HLS profile to h264 (e.g. Neptune Trident:
++        // mkv/http=hevc, mp4/hls=h264). Their HEVC transcode therefore goes
++        // progressive, which the player buffers heavily (~10s) before playback.
++        // For matched clients, flip their progressive video profiles to HLS below
++        // so the player can start after the first segment instead. Reuses the
++        // forced-HEVC friendly-name → profile.Name mapping; gated on its own
++        // LIDSLABS_FORCE_HLS_CLIENTS list.
++        var lidslabsForceHlsEligible =
++            profile is not null
++            && LidslabsClientMatches(
++                profile.Name,
++                Environment.GetEnvironmentVariable("LIDSLABS_FORCE_HLS_CLIENTS"));
++
++        _logger.LogDebug(
++            "lidslabs.forceHls gate: profile={ProfileName}, clients={Clients}, eligible={Eligible}",
++            profile?.Name,
++            Environment.GetEnvironmentVariable("LIDSLABS_FORCE_HLS_CLIENTS"),
++            lidslabsForceHlsEligible);
++
+         // Copy params from posted body
+         // TODO clean up when breaking API compatibility.
+         userId ??= playbackInfoDto?.UserId;
+@@ -238,6 +259,31 @@ public class MediaInfoController : BaseJellyfinApiController
+                     itemId);
+             }
+ 
++            // lidslabs: flip this client's progressive (http) video transcoding
++            // profiles to HLS so StreamBuilder delivers segments instead of one
++            // progressive stream. HLS needs a segmentable container; mkv is not
++            // valid, so normalize to ts (matches the working HLS clients). Runs
++            // after the forced-HEVC rewrite, so a flipped profile already carries
++            // hevc when that override is also active.
++            if (lidslabsForceHlsEligible)
++            {
++                var lidslabsHlsFlipped = 0;
++                foreach (var tp in profile.TranscodingProfiles.Where(t =>
++                    t.Type == DlnaProfileType.Video && t.Protocol == MediaStreamProtocol.http))
++                {
++                    tp.Protocol = MediaStreamProtocol.hls;
++                    tp.Container = "ts";
++                    lidslabsHlsFlipped++;
++                }
++
++                _logger.LogInformation(
++                    "lidslabs: forced HLS override flipped {Count} video profile(s) to HLS for profile={ProfileName}, ua={UserAgent}, item={ItemId}",
++                    lidslabsHlsFlipped,
++                    profile.Name,
++                    Request.Headers.UserAgent.ToString(),
++                    itemId);
++            }
++
+             // set device specific data
+             foreach (var mediaSource in info.MediaSources)
+             {
+-- 
+2.43.0
+
