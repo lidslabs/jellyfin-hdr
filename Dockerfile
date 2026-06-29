@@ -87,3 +87,14 @@ COPY --from=builder /publish/Jellyfin.Api.dll            /jellyfin/Jellyfin.Api.
 
 # HDR transcode is opt-in via env. Default is stock Jellyfin behavior.
 ENV LIDSLABS_ALLOW_HDR_TRANSCODE=0
+
+# Persist the CUDA JIT (PTX->cubin) compile cache. The base image gives a
+# non-root run user (e.g. user: 1000:1000) HOME=/, which is not writable, so the
+# NVIDIA driver cannot write its default ~/.nv/ComputeCache. On GPU architectures
+# newer than the cubins bundled in jellyfin-ffmpeg (e.g. Blackwell / sm_120), the
+# scale_cuda kernel is then JIT-compiled from PTX on EVERY ffmpeg launch, adding
+# ~6s of black-screen warmup to every transcode start. Pointing the cache at the
+# persistent /config volume makes that compile happen once, ever (survives
+# restarts). The cache is ~6 MB, write-once - no meaningful disk wear. Operators
+# with a read-only /config can override CUDA_CACHE_PATH. Pure perf fix, always on.
+ENV CUDA_CACHE_PATH=/config/.cudacache

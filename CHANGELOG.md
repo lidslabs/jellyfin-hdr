@@ -1,4 +1,19 @@
 # Changelog
+## [Unreleased]
+
+### Fixed
+- **Faster transcode start on newer GPUs (CUDA JIT cache).** The image now sets
+  `CUDA_CACHE_PATH=/config/.cudacache` so the NVIDIA driver's CUDA JIT cache
+  persists. On GPU architectures newer than jellyfin-ffmpeg's bundled cubins
+  (e.g. Blackwell / RTX 50-series, sm_120), the `scale_cuda` kernel is
+  JIT-compiled from PTX (~6 s) at ffmpeg launch; because the base image gives a
+  non-root run user a non-writable `HOME=/`, the driver couldn't persist that
+  compile and re-ran it on **every** transcode, adding ~6 s of black-screen
+  warmup each time. Pointing the cache at the persistent `/config` volume makes
+  the compile a one-time cost (survives restarts). Dockerfile-only; no patch-layer
+  change. Older GPUs (precompiled kernels, no JIT) are unaffected. See `README.md`
+  and `DECISIONS.md`.
+
 ## [0.3.0+jellyfin-10.11.11] - 2026-06-24
 
 Forced HEVC override for HDR-capable Apple TV clients (Neptune Trident,

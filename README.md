@@ -39,8 +39,10 @@ tags substitute `-` because `+` is not a valid Docker tag character.
 | `LIDSLABS_ALLOW_HDR_TRANSCODE` | `0` | **Master toggle — everything** | Accepts `1` or `true` (case-insensitive). Turns on HDR10 / HDR10+ / HLG passthrough during transcode. Also gates the forced-HEVC override below — if this is off, that never fires. |
 | `LIDSLABS_FORCE_HEVC_CLIENTS` | _(unset)_ | Forced-HEVC override | Comma-separated friendly client names to force onto an HEVC transcode for HDR sources (e.g. `neptune,streamyfin`). No effect unless the master toggle is on. See [Forced HEVC for HDR-capable clients](#forced-hevc-for-hdr-capable-clients). |
 
-These two variables are the only ones this image adds — everything else is stock
-Jellyfin plus the standard NVIDIA runtime variables. NVENC/CUDA requires the
+These two variables are the only *feature toggles* this image adds. The image
+also sets `CUDA_CACHE_PATH=/config/.cudacache` so the GPU's CUDA JIT cache
+persists (see [Faster transcode start](#faster-transcode-start)); everything else
+is stock Jellyfin plus the standard NVIDIA runtime variables. NVENC/CUDA requires the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 on the host, and HEVC hardware encoding enabled in
 **Dashboard → Playback → Transcoding** (Hardware acceleration → NVENC).
@@ -112,6 +114,37 @@ over time**: a client only belongs here while it mis-declares its codec
 preference. Once it requests HEVC HDR by default (as Swiftfin and Wholphin
 already do), it should be removed — the standard HDR passthrough then handles it
 without the override.
+
+## Faster transcode start
+
+When a transcode begins, the client shows a black screen until the first frame
+arrives. On newer GPUs that window can be ~6 s longer than it should be — and the
+cause is a CUDA caching gap, not the transcode itself.
+
+**Who hits this:** the slowdown needs a specific combination — an **Nvidia GPU
+transcode** *and* a compose that runs **Jellyfin as a non-root user** (e.g.
+`user: 1000:1000`, which is the recommended setup) *and* a **GPU newer than
+jellyfin-ffmpeg's bundled kernels** (RTX 50-series / Blackwell today). If that's
+you, you were doing everything right — the combination is what triggers it, and
+**this image ships the fix.** Drop any one factor (older GPU, or running as root)
+and you'd never have seen it.
+
+jellyfin-ffmpeg's CUDA scaling kernel (`scale_cuda`, used on the HDR/NVENC path)
+ships precompiled for a set of GPU architectures. On an architecture newer than
+that set (e.g. Nvidia **Blackwell / RTX 50-series, sm_120**), the driver instead
+JIT-compiles the kernel from PTX at launch — about 6 seconds. Normally that result
+is cached in the driver's compute cache so it only happens once. But the base
+image gives a non-root run user (`user: 1000:1000`) `HOME=/`, which isn't
+writable, so the driver can't write its default `~/.nv/ComputeCache` — and the
+~6 s recompile happens on **every** transcode start.
+
+This image sets **`CUDA_CACHE_PATH=/config/.cudacache`**, pointing the JIT cache
+at the persistent `/config` volume. The kernel is then compiled **once, ever**
+(it survives restarts), and subsequent transcodes start ~6 s sooner. The cache is
+~6 MB and write-once, so there's no meaningful disk wear. It's always on and
+needs no configuration; operators with a read-only `/config` can override
+`CUDA_CACHE_PATH` to another writable, persistent path. Older GPUs whose kernels
+ship precompiled never hit the JIT and are unaffected either way.
 
 ## HDR transcoding
 
