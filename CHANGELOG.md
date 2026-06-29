@@ -3,11 +3,14 @@
 
 Bug-fix release: eliminates a ~6 s black-screen warmup at the start of
 **every** NVENC transcode on Nvidia GPUs newer than jellyfin-ffmpeg's bundled
-`scale_cuda` kernels (Blackwell / RTX 50-series, sm_120). The image now
-persists the NVIDIA CUDA JIT cache to the `/config` volume so the kernel
-compiles once, ever, instead of on every playback. No patch-layer change —
-same Jellyfin fork commit as v0.3.0; Dockerfile-only, always on, no
-configuration required.
+`scale_cuda` kernels (Blackwell / RTX 50-series, sm_120). **This is a general
+Jellyfin-on-Nvidia behavior, not a bug introduced by the lidslabs patches** —
+stock `jellyfin/jellyfin` exhibits the same warmup on a new-enough GPU, because
+its non-root run user has a non-writable `HOME=/` and the NVIDIA driver can't
+persist its CUDA JIT compile, so it redoes the ~6 s compile on every launch.
+This image fixes it by pointing the cache at the persistent `/config` volume so
+the kernel compiles once, ever. No patch-layer change — same Jellyfin fork
+commit as v0.3.0; Dockerfile-only, always on, no configuration required.
 
 ### Highlights
 - **~6 s faster transcode start on newer Nvidia GPUs (RTX 50-series /
@@ -17,21 +20,26 @@ configuration required.
 - **No configuration needed** — the fix is baked into the image and always
   on. Operators with a read-only `/config` can override `CUDA_CACHE_PATH`.
 - **Older GPUs unaffected** (their kernels are precompiled; no JIT step).
+- **Not a lidslabs bug** — the warmup is inherent to Jellyfin + a non-root user
+  + a GPU newer than jellyfin-ffmpeg's bundled kernels; stock Jellyfin hits it
+  too. This image just ships the fix. See `README.md` "Faster transcode start".
 - **No patch-layer change** — same fork commit and 5-patch series as v0.3.0;
   this is a Dockerfile `ENV` addition only.
 
 ### Fixed
 - **Faster transcode start on newer GPUs (CUDA JIT cache).** The image now sets
   `CUDA_CACHE_PATH=/config/.cudacache` so the NVIDIA driver's CUDA JIT cache
-  persists. On GPU architectures newer than jellyfin-ffmpeg's bundled cubins
-  (e.g. Blackwell / RTX 50-series, sm_120), the `scale_cuda` kernel is
-  JIT-compiled from PTX (~6 s) at ffmpeg launch; because the base image gives a
-  non-root run user a non-writable `HOME=/`, the driver couldn't persist that
-  compile and re-ran it on **every** transcode, adding ~6 s of black-screen
-  warmup each time. Pointing the cache at the persistent `/config` volume makes
-  the compile a one-time cost (survives restarts). Dockerfile-only; no patch-layer
-  change. Older GPUs (precompiled kernels, no JIT) are unaffected. See `README.md`
-  and `DECISIONS.md`.
+  persists. This addresses a general Jellyfin-on-Nvidia behavior rather than
+  anything specific to the lidslabs patches: on GPU architectures newer than
+  jellyfin-ffmpeg's bundled cubins (e.g. Blackwell / RTX 50-series, sm_120), the
+  `scale_cuda` kernel is JIT-compiled from PTX (~6 s) at ffmpeg launch; because
+  the base `jellyfin/jellyfin` image gives a non-root run user a non-writable
+  `HOME=/`, the driver couldn't persist that compile and re-ran it on **every**
+  transcode, adding ~6 s of black-screen warmup each time (stock Jellyfin on such
+  a GPU sees the same thing). Pointing the cache at the persistent `/config`
+  volume makes the compile a one-time cost (survives restarts). Dockerfile-only;
+  no patch-layer change. Older GPUs (precompiled kernels, no JIT) are unaffected.
+  See `README.md` and `DECISIONS.md`.
 
 ## [0.3.0+jellyfin-10.11.11] - 2026-06-24
 
