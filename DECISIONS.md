@@ -1,3 +1,73 @@
+## Faster transcode start — persist the CUDA JIT cache
+
+Status: Implemented on `feature/fast-transcode-start`; not yet released.
+
+### Problem
+- On supported clients a transcode starts with a black screen until the first
+  frame arrives. On a newer GPU (RTX 5080, Blackwell/sm_120) that window measured
+  ~9–10 s on a 4K HDR→HEVC transcode, and it didn't move when storage was warm or
+  when ffmpeg's input probe was reduced.
+
+### The triggering combination
+The slowdown only appears when **all three** hold together — which is why some
+users see it and others never do:
+1. **An Nvidia GPU transcode path** that uses a CUDA filter (`scale_cuda`, on the
+   HDR/NVENC pipeline), **and**
+2. **the container configured so Jellyfin does not run as root** — e.g.
+   `user: 1000:1000` in compose (a recommended security practice), which leaves
+   the run user with a non-writable `HOME=/`, **and**
+3. **a GPU architecture newer than the cubins bundled in jellyfin-ffmpeg**
+   (e.g. Blackwell / sm_120), so the kernel must be JIT-compiled from PTX.
+
+Drop any one and the symptom disappears: an older GPU ships a precompiled kernel
+(no JIT), running as root gives a writable `HOME` (cache persists), and a non-CUDA
+path never invokes the kernel. The user did nothing wrong — running non-root is
+encouraged; the combination is what bites.
+
+### Root cause (measured, not assumed)
+- Isolating the pipeline showed the cost was a fixed ~6 s that appeared only when
+  the `scale_cuda` filter was in the graph, was independent of segment length and
+  encode preset, and **repeated on every ffmpeg launch** (two back-to-back runs
+  both paid it) — the signature of CUDA JIT with no persistent cache.
+- The driver normally caches the JIT result in `~/.nv/ComputeCache`; with
+  `HOME=/` non-writable it could not, forcing a recompile every transcode. Proof:
+  setting a writable `CUDA_CACHE_PATH` cut the second run from ~6.5 s to ~0.8 s;
+  the full Jellyfin HLS command went from 9.46 s to 3.52 s to first segment.
+
+### Decision
+- Set `ENV CUDA_CACHE_PATH=/config/.cudacache` in the image (Dockerfile only; no
+  patch-layer change). `/config` is always a persistent Jellyfin volume, so the
+  kernel is JIT-compiled once, ever (survives restarts). The driver auto-creates
+  the directory; no writable-dir setup needed. This is the patch that addresses
+  the triggering combination above.
+- **Always on, not env-gated.** Unlike the HDR features (which change output and
+  are opt-in), this only changes startup speed, never output. Gating it
+  off-by-default would ship a known ~6 s regression by default. Operators with a
+  read-only `/config` can override `CUDA_CACHE_PATH`.
+
+### Why persistent disk, not RAM (`/dev/shm`)
+- The cache is ~6 MB and write-once — there is no churn to wear an SSD. RAM
+  would be wiped on restart, re-paying the ~6 s JIT once per restart; persistent
+  disk pays it once, ever. Persistent strictly wins for this workload, so no
+  disk-vs-RAM toggle is warranted.
+
+### Scope note
+- This was reached after rejecting an ffmpeg input-probe reduction
+  (`probesize`/`analyzeduration`): measurement showed the probe is a ceiling that
+  a well-muxed file satisfies early, so reducing it changed nothing for this
+  content. The probe was not the bottleneck; the JIT cache was. The probe approach
+  was dropped rather than shipped as dead weight.
+- Secondary, separate lever (not part of this fix): NVENC `-preset p7`→`p4` shaved
+  the residual ~3.5 s toward ~1.5 s at a small quality cost — a Jellyfin
+  transcoding setting, tracked separately.
+
+### Upstream angle
+- The non-writable `HOME=/` for non-root users is a latent base-image gap that
+  only surfaces on GPU archs requiring JIT. Worth an upstream report; until then
+  this image carries the fix.
+
+---
+
 ## v0.3.0 — Forced HEVC override for HDR-capable Apple TV clients
 
 Status: Shipped.
