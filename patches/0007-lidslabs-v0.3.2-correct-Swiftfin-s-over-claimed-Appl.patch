@@ -1,4 +1,4 @@
-From d068226a00d76288d6237c2c8fd22ffc08afb152 Mon Sep 17 00:00:00 2001
+From 9351e307cab22fb96d9ff2238da604336ebc5bf2 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Tue, 30 Jun 2026 13:18:46 -0400
 Subject: [PATCH 7/7] lidslabs v0.3.2: correct Swiftfin's over-claimed Apple TV
@@ -6,10 +6,12 @@ Subject: [PATCH 7/7] lidslabs v0.3.2: correct Swiftfin's over-claimed Apple TV
 
 Swiftfin (Apple TV, client app name "Jellyfin tvOS") posts a DeviceProfile
 that over-claims two capabilities the Apple TV's AVPlayer does not actually
-have. Both are corrected in GetPostedPlaybackInfo, gated on
+have, and additionally needs its forced remux delivered as fMP4 rather than
+MPEG-TS. All three are corrected in GetPostedPlaybackInfo, gated on
 User.GetClient() == "Jellyfin tvOS" (Swiftfin posts DeviceProfile.Name=null,
 so the forced-HEVC profile.Name map cannot target it). Always-on / code-scoped:
-correcting a falsely-advertised capability is a fix, not an operator preference.
+correcting a falsely-advertised capability (and an unplayable default transport)
+is a fix, not an operator preference.
 
 1. TrueHD audio (no-audio fix). Swiftfin's video DirectPlayProfile lists
    truehd/dts/dca with no restricting audio CodecProfile, so Jellyfin hands it
@@ -36,14 +38,36 @@ correcting a falsely-advertised capability is a fix, not an operator preference.
    Added as a separate CodecProfile (empty ApplyConditions) so Swiftfin's
    existing entries are untouched; idempotent if a restriction already exists.
 
-One Debug gate breadcrumb plus one Information "fired" line per strip.
-See DEBUG_LOG.md / DESIGN_DECISIONS.md (2026-06-30).
+3. fMP4 HLS transport (static fix). Once strips 1-2 push a lossless/dual-layer
+   title off pure direct-play into an HLS remux, Jellyfin's default segment
+   container is MPEG-TS -- and Apple's AVPlayer cannot decode HEVC inside
+   MPEG-TS, rendering digital static (confirmed on a 2026-06-30 dev capture: the
+   remux exited clean with valid .ts segments, yet the Apple TV showed static;
+   the same stream as fMP4 played correctly). Rewrite every video HLS
+   TranscodingProfile container ts->mp4 so StreamInfo emits &SegmentContainer=mp4
+   and DynamicHlsController muxes fMP4 (CMAF) -- the same effect as Swiftfin's
+   "fMP4 HLS" app setting, but automatic and independent of operator config.
+   Container-only: codecs/protocol/conditions are untouched, so the
+   copy-vs-transcode decision is unchanged; only the segment muxing differs.
+   fMP4 is the Apple-native HLS path, safe for h264/HEVC and SDR/HDR alike.
+   This is the general rule "force fMP4 whenever an Apple-TV AVPlayer client
+   transcodes HEVC" applied to Swiftfin via a reusable helper; Neptune AV
+   Player is a documented future adopter (its forced-HEVC "cannot render HLS
+   HEVC" failure is suspected to be this same mpegts bug).
+
+Note: with strips 1-3, Mario (TrueHD + DV P7) plays cleanly with AC3 audio and
+a correctly HDR10-signaled (VIDEO-RANGE=PQ) fMP4 stream, but the Apple TV stays
+in SDR display mode -- a Swiftfin client bug (it does not trigger tvOS dynamic-
+range switching on the transcode path), out of scope for this fork.
+
+One Debug gate breadcrumb plus one Information "fired"/"applied" line per
+correction. See DEBUG_LOG.md / DESIGN_DECISIONS.md (2026-06-30).
 ---
- .../Controllers/MediaInfoController.cs        | 126 ++++++++++++++++++
- 1 file changed, 126 insertions(+)
+ .../Controllers/MediaInfoController.cs        | 177 ++++++++++++++++++
+ 1 file changed, 177 insertions(+)
 
 diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
-index 260e203888..e16a8a33f5 100644
+index 260e203888..a79ea49eb8 100644
 --- a/Jellyfin.Api/Controllers/MediaInfoController.cs
 +++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
 @@ -175,6 +175,39 @@ public class MediaInfoController : BaseJellyfinApiController
@@ -86,7 +110,7 @@ index 260e203888..e16a8a33f5 100644
          // Copy params from posted body
          // TODO clean up when breaking API compatibility.
          userId ??= playbackInfoDto?.UserId;
-@@ -238,6 +271,99 @@ public class MediaInfoController : BaseJellyfinApiController
+@@ -238,6 +271,126 @@ public class MediaInfoController : BaseJellyfinApiController
                      itemId);
              }
  
@@ -183,9 +207,67 @@ index 260e203888..e16a8a33f5 100644
 +                }
 +            }
 +
++            // lidslabs v0.3.2: force Swiftfin's HLS remux/transcode to fMP4
++            // (CMAF) segments instead of MPEG-TS. Apple's AVPlayer — Swiftfin's
++            // renderer on Apple TV — cannot decode HEVC inside an MPEG-TS
++            // container and renders digital static; on Apple platforms HEVC over
++            // HLS must use fMP4. The TrueHD and DV P7 strips above push a
++            // lossless/dual-layer title off pure direct-play into a remux, and
++            // Jellyfin's default HLS segment container is MPEG-TS, so without
++            // this the remux would be HEVC-in-mpegts = static. Rewriting the
++            // video HLS TranscodingProfile container ts->mp4 makes StreamInfo
++            // emit &SegmentContainer=mp4, which DynamicHlsController muxes as
++            // fMP4 — the same effect as Swiftfin's "fMP4 HLS" app setting, but
++            // automatic. Container-only: codecs/protocol/conditions are
++            // untouched, so the copy-vs-transcode decision is unchanged; only the
++            // segment muxing format differs. fMP4 is the Apple-native HLS path,
++            // safe for h264/HEVC and SDR/HDR alike. This is the general rule
++            // "force fMP4 whenever an Apple-TV AVPlayer client transcodes HEVC"
++            // applied to Swiftfin; Neptune AV Player is a documented future
++            // adopter (its forced-HEVC "cannot render HLS HEVC" failure is
++            // suspected to be this same mpegts bug — see .project docs).
++            if (lidslabsSwiftfinClient && LidslabsForceFmp4Hls(profile))
++            {
++                _logger.LogInformation(
++                    "lidslabs: Swiftfin fMP4 HLS force applied (video TranscodingProfile container -> mp4) for client={Client}, item={ItemId}",
++                    User.GetClient(),
++                    itemId);
++            }
++
              // set device specific data
              foreach (var mediaSource in info.MediaSources)
              {
+@@ -365,6 +518,30 @@ public class MediaInfoController : BaseJellyfinApiController
+             => p.DirectPlayProfiles.Any(dp => LidslabsSplitTrim(dp.VideoCodec).Contains("hevc", StringComparer.OrdinalIgnoreCase))
+                 || p.TranscodingProfiles.Any(tp => LidslabsSplitTrim(tp.VideoCodec).Contains("hevc", StringComparer.OrdinalIgnoreCase))
+                 || p.CodecProfiles.Any(cp => LidslabsSplitTrim(cp.Codec).Contains("hevc", StringComparer.OrdinalIgnoreCase));
++
++        // Rewrites every video HLS TranscodingProfile's container to mp4 so the
++        // resulting HLS stream is muxed as fMP4 (CMAF) instead of MPEG-TS. Apple
++        // AVPlayer clients cannot decode HEVC-in-mpegts, so any forced remux for
++        // such a client must use fMP4. Returns true if any profile was changed.
++        // Idempotent (profiles already on mp4 are left as-is) and scoped to HLS
++        // video profiles only — progressive/http and audio profiles are
++        // untouched. Reusable: a future Apple-TV AVPlayer client (e.g. Neptune
++        // AV Player) can call this from its own gate without re-deriving it.
++        static bool LidslabsForceFmp4Hls(DeviceProfile p)
++        {
++            var changed = false;
++            foreach (var tp in p.TranscodingProfiles.Where(t => t.Type == DlnaProfileType.Video
++                                                                && t.Protocol == MediaStreamProtocol.hls))
++            {
++                if (!string.Equals(tp.Container, "mp4", StringComparison.OrdinalIgnoreCase))
++                {
++                    tp.Container = "mp4";
++                    changed = true;
++                }
++            }
++
++            return changed;
++        }
+     }
+ 
+     /// <summary>
 -- 
 2.43.0
 
