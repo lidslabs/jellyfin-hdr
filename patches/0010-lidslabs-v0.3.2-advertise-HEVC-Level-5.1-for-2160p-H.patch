@@ -1,0 +1,62 @@
+From a850a4a903a835d6fb39f295ffa3ad7b6e05b8fe Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Thu, 2 Jul 2026 09:14:48 -0400
+Subject: [PATCH 10/10] lidslabs v0.3.2: advertise HEVC Level 5.1 for 2160p HLS
+ transcode
+
+Apple AVPlayer (fMP4 HLS) refuses a 4k/2160p HEVC variant whose CODECS
+advertises below Level 5.1, even though L5.0 is HEVC-spec-valid for
+4k@<=30fps. Symptom: the master playlist is fetched, the media playlist
+is fetched, then no segment is ever requested and ffmpeg never spawns
+(black screen). Observed on Neptune AV Player and Moonfin with a 4k HEVC
+DV P7 source; a 1080p transcode (also L150) and Swiftfin's source-level
+copy (L153) both render, isolating the level/resolution mismatch.
+
+Upstream NormalizeTranscodingLevel caps every HEVC transcode to L5.0.
+Make the cap resolution-aware: 5.1 (153) for 2160p output, 5.0 (150)
+below that. hevc_nvenc is not given -level and already emits L5.1 for
+4k, so this only corrects the advertised manifest level to match the
+bytes. The sub-2160p 5.0 cap is retained to preserve the Apple A10
+SDR-HEVC compatibility the DynamicHlsHelper Level-5.0 fallback relies on.
+Mirrors the adjacent h264 branch (4k requires L5.1 on Safari fMP4).
+Client-agnostic; no new env var or per-client gate.
+---
+ .../MediaEncoding/EncodingHelper.cs           | 22 ++++++++++++++++---
+ 1 file changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+index 53fe202f83..2df0932ab7 100644
+--- a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
++++ b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+@@ -1843,9 +1843,25 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 // Level 5.0 is suitable for up to 4k 30fps hevc encoding, otherwise let the encoder to handle it.
+                 // https://en.wikipedia.org/wiki/High_Efficiency_Video_Coding_tiers_and_levels
+                 // MaxLumaSampleRate = 3840*2160*30 = 248832000 < 267386880.
+-                if (requestLevel < 0 || requestLevel >= 150)
+-                {
+-                    return "150";
++                //
++                // lidslabs v0.3.2: the L5.0 cap is HEVC-spec-valid for 4k@<=30fps, but Apple
++                // AVPlayer (fMP4 HLS) REJECTS a 2160p stream whose CODECS advertises below
++                // Level 5.1: it maps 2160p -> minimum L5.1 regardless of the spec sample-rate
++                // math and refuses the master playlist (black screen; the client fetches the
++                // media playlist then never requests a segment, so ffmpeg never spawns). This
++                // is the exact analogue of the h264 branch below ("h264 4k 30fps requires at
++                // least level 5.1 otherwise it will break on safari fmp4"). For 2160p HEVC
++                // output, raise the cap to 5.1 (153) so the advertised level matches what the
++                // encoder actually produces (hevc_nvenc is not given -level and emits L5.1 for
++                // 4k). Sub-2160p output keeps the 5.0 cap, which preserves the Apple A10 SDR-HEVC
++                // compatibility the DynamicHlsHelper Level-5.0 fallback depends on. Client-agnostic
++                // manifest-correctness fix, not a per-client workaround. Verified 2026-07-01:
++                // 4k source advertised hvc1.2.4.L150.B0 -> Neptune AV Player + Moonfin black;
++                // 1080p transcode (L150) and Swiftfin's source-level copy (L153) both rendered.
++                var hevcLevelCap = (state.OutputHeight >= 2160 || state.OutputWidth >= 3840) ? 153 : 150;
++                if (requestLevel < 0 || requestLevel >= hevcLevelCap)
++                {
++                    return hevcLevelCap.ToString(CultureInfo.InvariantCulture);
+                 }
+             }
+             else if (string.Equals(state.ActualOutputVideoCodec, "h264", StringComparison.OrdinalIgnoreCase))
+-- 
+2.43.0
+
