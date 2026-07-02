@@ -1,7 +1,7 @@
 From 8bafa871b2d09dbf0df3533592fe5818b6c3b490 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Wed, 1 Jul 2026 00:05:40 -0400
-Subject: [PATCH 08/10] lidslabs v0.3.2: forced-HEVC source-independent,
+Subject: [PATCH 08/11] lidslabs v0.3.2: forced-HEVC source-independent,
  decoupled from HDR gate
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

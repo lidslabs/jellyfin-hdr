@@ -1,7 +1,7 @@
 From 9351e307cab22fb96d9ff2238da604336ebc5bf2 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Tue, 30 Jun 2026 13:18:46 -0400
-Subject: [PATCH 07/10] lidslabs v0.3.2: correct Swiftfin's over-claimed Apple
+Subject: [PATCH 07/11] lidslabs v0.3.2: correct Swiftfin's over-claimed Apple
  TV capabilities
 
 Swiftfin (Apple TV, client app name "Jellyfin tvOS") posts a DeviceProfile
