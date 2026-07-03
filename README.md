@@ -36,8 +36,9 @@ tags substitute `-` because `+` is not a valid Docker tag character.
 
 | Variable | Default | Enables | Notes |
 | --- | --- | --- | --- |
-| `LIDSLABS_ALLOW_HDR_TRANSCODE` | `0` | **Master toggle — everything** | Accepts `1` or `true` (case-insensitive). Turns on HDR10 / HDR10+ / HLG passthrough during transcode. Also gates the forced-HEVC override below — if this is off, that never fires. |
-| `LIDSLABS_FORCE_HEVC_CLIENTS` | _(unset)_ | Forced-HEVC override | Comma-separated friendly client names to force onto an HEVC transcode for HDR sources (e.g. `neptune,streamyfin`). No effect unless the master toggle is on. See [Forced HEVC for HDR-capable clients](#forced-hevc-for-hdr-capable-clients). |
+| `LIDSLABS_ALLOW_HDR_TRANSCODE` | `0` | **HDR passthrough master toggle** | Accepts `1` or `true` (case-insensitive). Turns on HDR10 / HDR10+ / HLG passthrough during transcode. Governs the HDR path only — the forced-HEVC and forced-SDR client levers below are independent of it. |
+| `LIDSLABS_FORCE_HEVC_CLIENTS` | _(unset)_ | Forced-HEVC override | Comma-separated friendly client names to force onto an HEVC transcode (e.g. `neptune,streamyfin,neptune_av`). Fires for **any** source, SDR or HDR — an H264 SDR remux becomes HEVC SDR. Independent of the master toggle; only ever forces a codec the client already advertises. See [Forced HEVC for HDR-capable clients](#forced-hevc-for-hdr-capable-clients). |
+| `LIDSLABS_FORCE_SDR_CLIENTS` | _(unset)_ | Forced HDR→SDR tonemap | Comma-separated friendly client names whose HDR titles are tonemapped to SDR (codec stays HEVC) instead of HDR passthrough. For AVPlayer-family Apple TV clients that reject `VIDEO-RANGE=PQ` and black-screen on HDR-over-HLS (e.g. `neptune_av`). Only meaningful when the master toggle is on. See [AVPlayer clients and HDR](#avplayer-clients-and-hdr). |
 
 These two variables are the only *feature toggles* this image adds. The image
 also sets `CUDA_CACHE_PATH=/config/.cudacache` so the GPU's CUDA JIT cache
@@ -67,8 +68,9 @@ services:
               capabilities: [gpu]
     environment:
       # --- lidslabs custom (see the table above) ---
-      LIDSLABS_ALLOW_HDR_TRANSCODE: "1"                 # master toggle — required
-      LIDSLABS_FORCE_HEVC_CLIENTS: "neptune,streamyfin" # optional; forced-HEVC override
+      LIDSLABS_ALLOW_HDR_TRANSCODE: "1"                    # HDR passthrough master toggle
+      LIDSLABS_FORCE_HEVC_CLIENTS: "neptune,streamyfin,neptune_av" # optional; forced-HEVC override
+      LIDSLABS_FORCE_SDR_CLIENTS: "neptune_av"             # optional; HDR->SDR for AVPlayer clients
       # --- NVENC capabilities exposed to the container ---
       NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
       TZ: America/New_York
@@ -90,10 +92,14 @@ services:
 
 ### Forced HEVC for HDR-capable clients
 
-Some HDR-capable clients (notably Apple TV apps) advertise HEVC + HDR10 support
-but request an h264 + SDR transcode, so HDR never reaches the screen. When
-`LIDSLABS_FORCE_HEVC_CLIENTS` lists a client and the source is HDR, this image
-rewrites the request to HEVC so the HDR passthrough path engages instead.
+Some HDR-capable clients (notably Apple TV apps) advertise HEVC support but
+request an h264 transcode, so HEVC's efficiency — and, on HDR sources, HDR
+itself — never reaches the screen. When `LIDSLABS_FORCE_HEVC_CLIENTS` lists a
+client, this image rewrites the request to HEVC. It fires for **any** source:
+an HDR title engages the HDR passthrough path, and an SDR remux is simply
+re-encoded to HEVC SDR (e.g. a 40 Mbps H264 remux → ~20 Mbps HEVC) rather than
+back to H264. It only ever forces a codec the client's own profile already
+advertises, and it's independent of the HDR master toggle.
 
 Clients are matched by **friendly name → `DeviceProfile.Name`** mapping, not by
 User-Agent (one app can expose several player modes under the same UA):
@@ -102,18 +108,43 @@ User-Agent (one app can expose several player modes under the same UA):
 | --- | --- |
 | `neptune` | Neptune (Trident player) |
 | `streamyfin` | Streamyfin (MPV player) |
+| `neptune_av` | Neptune (AV Player) — pair with `LIDSLABS_FORCE_SDR_CLIENTS`, see below |
 
 Names not in the table are silently ignored. Adding a new client is a code change
 (a reviewable mapping entry), not just an env var edit — by design, so only
-verified-working client modes get the override. Neptune **AV Player** is
-deliberately excluded: it declares HEVC HDR10 capability but cannot render the
-resulting stream.
+verified-working client modes get the override.
 
 This list is a workaround, not a permanent feature, and is expected to **shrink
 over time**: a client only belongs here while it mis-declares its codec
 preference. Once it requests HEVC HDR by default (as Swiftfin and Wholphin
 already do), it should be removed — the standard HDR passthrough then handles it
 without the override.
+
+### AVPlayer clients and HDR
+
+Apple's **AVPlayer** engine — used by Neptune **AV Player** and by Swiftfin's
+default (VLCKit/AVPlayer) path — **cannot ingest an HDR-over-HLS stream.** It
+rejects the HLS master playlist's `VIDEO-RANGE=PQ` at parse time and never
+requests a segment, so an HDR title transcoded with passthrough on shows a
+**black screen** even though the client advertises HEVC HDR10.
+
+`LIDSLABS_FORCE_SDR_CLIENTS` handles this: for a listed client, an HDR source is
+**tonemapped to SDR** while the transcode stays HEVC (a colour-range downgrade,
+not a codec change — efficiency is retained). The client then accepts the
+playlist and renders. HDR→SDR is inherent to AVPlayer over HLS, not a limitation
+this image can remove; SDR that plays beats HDR that black-screens.
+
+- **Neptune AV Player** — supported: set `neptune_av` in **both**
+  `LIDSLABS_FORCE_HEVC_CLIENTS` (it only ever requests h264) and
+  `LIDSLABS_FORCE_SDR_CLIENTS`. 4K HDR titles render as clean HEVC SDR.
+- **Swiftfin** — for HDR, use Swiftfin's **Native Player**; its default engine
+  doesn't trigger the TV's HDR mode. Swiftfin isn't added to
+  `LIDSLABS_FORCE_SDR_CLIENTS` because it posts an identical profile for both its
+  players, so there's no way to target only the AVPlayer mode without also
+  degrading the working Native-Player HDR path.
+
+The list is inert on SDR sources (nothing to tonemap) and, like the forced-HEVC
+list, should shrink as clients gain real HDR-over-HLS support.
 
 ## Faster transcode start
 

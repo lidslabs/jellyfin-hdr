@@ -1,3 +1,189 @@
+## Enhanced NVDEC coexistence — keep HDR working with the decoder default-on
+
+Status: Implemented on mainline; not yet released (ships in v0.3.2).
+
+### Problem
+- Jellyfin's **"Enable enhanced NVDEC decoder"** transcoding setting
+  (`EncodingOptions.EnableEnhancedNvdecDecoder`) **defaults to ON upstream**. With it
+  on, this image's HDR passthrough path hard-failed: a black screen / freeze on the
+  first frame, with no decodable output — **not** a wrong-colors / tonemap bug. Because
+  the toggle is on by default, this was the *default* experience for any HDR transcode
+  on Nvidia unless the operator knew to turn the setting off.
+
+### Root cause (captured, not assumed)
+- The enhanced decoder emits ffmpeg's `-hwaccel_flags +unsafe_output`, which passes the
+  encoder the decoder's **internal, un-copied** CUDA surfaces. The HDR passthrough path
+  routes those surfaces through a no-op `scale_cuda=p010` step (a passthrough that
+  allocates nothing) straight into NVENC, so the decoder's finite surface pool is pinned
+  and exhausted — ffmpeg fails with `CUDA_ERROR_MAP_FAILED` (`cuvidMapVideoFrame`). SDR
+  transcodes are unaffected because their `scale_cuda` step performs a real format
+  conversion that reallocates and frees the surface. Reproduced on HDR10 and Dolby
+  Vision Profile 7.
+
+### Decision
+- For the HDR passthrough path on Nvidia with the enhanced decoder on, **omit only the
+  `+unsafe_output` flag**. The enhanced NVDEC decoder itself is **kept** — this is not a
+  fallback to the older `*_cuvid` decoder. The result is HDR transcodes that work
+  whether the operator leaves "Enable enhanced NVDEC decoder" on (the default) or off.
+- **Always on, no configuration.** This is a correctness fix, not a preference — there is
+  no coherent reason to expose a toggle that only lets a user re-break HDR. Every non-HDR
+  and non-Nvidia transcode command is byte-identical to upstream; the change only ever
+  removes the one flag for the exact HDR-passthrough case that needs it.
+
+### Why this over forcing the older decoder
+- The obvious alternative was to force the dedicated `*_cuvid` decoder on the HDR path
+  and ignore the operator's toggle. That works but is heavier: it discards the enhanced
+  decoder's decode-side advantages (ffmpeg's own bitstream parser handles some awkward
+  streams, frame-accurate seeking) for HDR, and it is a broader override to maintain
+  across upstream updates. Capturing the actual ffmpeg error showed the failure was a
+  **single flag**, not a decoder incompatibility — so the surgical fix (drop the flag,
+  keep the decoder) is both smaller and strictly better. No measurable user-facing
+  difference in decode quality or throughput either way; the two decoders drive the same
+  physical NVDEC block.
+
+---
+
+## AVPlayer-family clients can't ingest HDR-over-HLS — force them to SDR
+
+Status: Implemented on mainline; ships in v0.3.2. Env var `LIDSLABS_FORCE_SDR_CLIENTS`.
+
+### Problem
+- With HDR passthrough on (`LIDSLABS_ALLOW_HDR_TRANSCODE=1`), the image tags an HLS
+  transcode's master playlist `VIDEO-RANGE=PQ` and hands HDR to **every** client that
+  transcodes, whether or not it asked for HDR. **AVPlayer-family tvOS clients** (Apple's
+  `AVPlayer` — Neptune AV Player, and Swiftfin's default engine) **reject `VIDEO-RANGE=PQ`
+  at master-playlist parse and never request a segment** → the screen stays black. They
+  advertise HEVC HDR10 capability, so the source of the failure isn't obvious from the
+  DeviceProfile; it only shows up on the HLS ingest path.
+
+### Decision
+- Add `LIDSLABS_FORCE_SDR_CLIENTS` — a per-client list whose HDR titles are forced onto an
+  **HDR→SDR tonemap** while the transcode **stays HEVC**. It is a colour-range downgrade,
+  not a codec change, so HEVC's efficiency is retained. Decided at PlaybackInfo by
+  `DeviceProfile.Name` (the same collision-safe `LidslabsClientMatches` map as the
+  forced-HEVC lever), carried on the transcode request as `VideoRangeType=SDR`, and honored
+  at the single HDR-passthrough gate (`EncodingHelper.IsHdrPassthroughMode`), which flips
+  the HLS master `VIDEO-RANGE` and the ffmpeg tonemap together. Inert on SDR sources
+  (nothing to downgrade) and idempotent.
+
+### Why decide at PlaybackInfo, not at transcode time
+- At transcode time AV Player and Trident are **indistinguishable** — same Neptune app, same
+  User-Agent. Only the posted `DeviceProfile.Name` delineates them (`"Neptune tvOS"` vs
+  `"Neptune tvOS (Trident)"`), and that is only available at PlaybackInfo. Deciding there and
+  carrying the decision on the request keeps one collision-safe source of truth and avoids a
+  fragile UA match downstream. Trident is deliberately absent from the list — it plays HDR on
+  its own path and must stay HDR.
+
+### Why SDR is the right outcome for these clients (not a regression)
+- HDR-over-HLS is a **hard AVPlayer limitation**, not something a server knob can satisfy —
+  the client refuses the PQ manifest before any bytes flow. The realistic choice for an
+  AVPlayer-family client is *SDR that renders* vs *HDR that black-screens*. A tonemapped SDR
+  HEVC stream that plays is strictly better than a correct HDR stream the client won't fetch.
+- **Not delineable everywhere.** Swiftfin posts an identical DeviceProfile
+  (`Name=null`, `client="Jellyfin tvOS"`) for both its AVPlayer and Native players, so there
+  is no server-side signal to force **only** its AVPlayer mode to SDR without also washing
+  out its working Native-Player HDR path. Swiftfin is therefore **not** added to the list; its
+  HDR answer is "use the Native Player" (see the Swiftfin entry). Force-SDR is applied only to
+  clients that expose a distinct, matchable profile name for the AVPlayer mode (Neptune AV
+  Player today).
+
+---
+
+## Neptune AV Player — supported via forced HEVC + fMP4 + forced SDR
+
+Status: Implemented on mainline; ships in v0.3.2 (friendly name `neptune_av`).
+
+### Problem
+- Neptune's **AV Player** mode advertises HEVC HDR10 but historically rendered **black** on
+  HDR titles. It is AVPlayer-on-tvOS (same renderer class as Swiftfin), and its only video
+  `TranscodingProfile` is h264/HLS, so it never *requests* HEVC — it must be forced, and
+  forcing HEVC alone still went black.
+
+### Decision
+- Support AV Player through three levers, all keyed on the collision-safe `neptune_av` match
+  (`"Neptune tvOS"` and not Trident):
+  1. **Forced HEVC** (`LIDSLABS_FORCE_HEVC_CLIENTS=…,neptune_av`) — inject HEVC as the
+     transcode target, since AV Player only ever requests h264.
+  2. **fMP4 HLS transport** — rewrite the video HLS container `ts→mp4`; AVPlayer cannot
+     decode HEVC-in-MPEG-TS.
+  3. **Forced SDR** (`LIDSLABS_FORCE_SDR_CLIENTS=…,neptune_av`) — tonemap HDR→SDR so the
+     client accepts the master playlist (see the force-SDR entry above). This is the lever
+     that actually cleared the black screen; the first two are necessary but not sufficient.
+- On device (2026-07-02/03): a 4K HDR title renders as clean HEVC **SDR**, and an H264 SDR
+  source is upgraded to HEVC SDR. Trident, which shares the app, is unaffected.
+
+### Why AV Player is SDR-only
+- The HDR limitation is AVPlayer's, not the server's (see the force-SDR entry). AV Player's
+  supported outcome is a tonemapped SDR HEVC stream that plays, not HDR passthrough. Revisit
+  if a future Neptune build changes AVPlayer's HLS HDR handling — Neptune is in TestFlight.
+
+---
+
+## Swiftfin (Apple TV) — correct the DeviceProfile it over-claims
+
+Status: Implemented on mainline; ships in v0.3.2. Always on, code-scoped to Swiftfin.
+
+### Problem
+- Swiftfin (Apple TV, `User.GetClient() == "Jellyfin tvOS"`, `DeviceProfile.Name=null`)
+  posts a DeviceProfile that over-claims what its Apple-AVPlayer engine can actually do,
+  producing three distinct failures on HDR/lossless titles: **silent audio** (advertises
+  TrueHD direct-play it can't decode), **digital static** (blind-copies a Dolby Vision
+  Profile 7 dual-layer stream), and **static again** on any forced/remuxed HEVC (AVPlayer
+  can't decode HEVC-in-MPEG-TS).
+
+### Decision
+- Three always-on corrections under the one client gate — targeting, not an operator toggle;
+  correcting a client's false capability claim is a correctness fix, not a preference:
+  1. **Strip TrueHD** (`truehd`/`mlp`) from Swiftfin's audio direct-play profiles so the
+     track transcodes (or picks up the AC3 compat redirect) instead of playing silent.
+     **DTS-HD MA is left intact** — AVPlayer decodes its DTS core and plays it.
+  2. **Strip Dolby Vision Profile 7** to a clean HDR10 base via an `hevc` `VideoRangeType`
+     allow-list excluding only the enhancement-layer types → stream-copy with
+     `dovi_rpu=strip`, **no re-encode**. P5/P8/HDR10 still direct-play.
+  3. **Force fMP4 HLS** transport (`ts→mp4`) so a remuxed HEVC stream is CMAF, which AVPlayer
+     decodes natively.
+
+### Known residual — a Swiftfin client bug, not our output
+- After the fixes, video + audio are correct and the stream carries HDR10 (`VIDEO-RANGE=PQ`),
+  but on Swiftfin's **default VLCKit engine** the Apple TV stays in **SDR display mode** —
+  VLCKit doesn't tone-map or trigger tvOS HDR switching. **Workaround: use Swiftfin's Native
+  Player**, which engages HDR. This is out of scope for the server; documented as a client
+  compatibility note. Swiftfin's AVPlayer mode is not separately force-SDR'd because it shares
+  a byte-identical DeviceProfile with the working Native Player (see the force-SDR entry).
+
+### Self-deactivating
+- All three corrections graduate out on their own if a future Swiftfin build stops
+  over-claiming (reports TrueHD/DV-P7 honestly): the strips become no-ops. The fMP4 force
+  stays needed regardless — no AVPlayer remux can use MPEG-TS. Re-test against the imminent
+  Swiftfin revamp and shrink the list where possible.
+
+---
+
+## Forced HEVC is a codec-preference lever, independent of the HDR path
+
+Status: Implemented on mainline; ships in v0.3.2. Supersedes the v0.3.0 forced-HEVC scoping.
+
+### What changed
+- The v0.3.0 forced-HEVC override only rewrote `TranscodingProfile.VideoCodec` to prepend
+  `hevc` **when the source was HDR**, and it shared the `LIDSLABS_ALLOW_HDR_TRANSCODE` master
+  toggle as an enable condition. Both couplings were truth-in-naming misses: a lever named
+  **FORCE_HEVC** left an SDR remux on H264, and a codec preference has nothing to do with the
+  HDR master toggle.
+
+### Decision
+- Drop the HDR-source condition and decouple the lever from `LIDSLABS_ALLOW_HDR_TRANSCODE`.
+  Base eligibility is now **client-in-list + client advertises HEVC**, for **any** source. A
+  forced client's 40 Mbps H264 SDR remux becomes ~20 Mbps HEVC SDR instead of re-encoding to
+  20 Mbps H264. HDR passthrough remains governed **solely** by the master toggle inside
+  `IsHdrPassthroughMode`; the two levers are fully independent and neither can enable or
+  disable the other.
+- The safeguard is unchanged: the override **never invents capability** — it only forces a
+  codec the client's DeviceProfile already advertises (`LidslabsProfileClaimsHevc`), for
+  clients explicitly listed. AVPlayer-family clients that can't render forced HEVC over HDR
+  are handled by the paired fMP4 + force-SDR levers, not by widening this one.
+
+---
+
 ## Faster transcode start — persist the CUDA JIT cache
 
 Status: Implemented on `feature/fast-transcode-start`; not yet released.

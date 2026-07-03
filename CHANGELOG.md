@@ -1,4 +1,135 @@
 # Changelog
+## [Unreleased] — targets 0.3.2+jellyfin-10.11.11
+
+> Staged on `main`, not yet cut. The release step dates this heading and bumps
+> `VERSION` 0.3.1 → 0.3.2.
+
+Bug-fix bundle focused on **HDR that works whatever the client and decoder
+setting are**. Three classes of fix: (1) HDR passthrough now works with
+Jellyfin's **"Enhanced NVDEC decoder"** left on (its upstream default), instead
+of hard-failing to a black screen; (2) **AVPlayer-family Apple TV clients**
+(Swiftfin, Neptune AV Player) — which reject HDR-over-HLS and previously went
+black or silent — now render, via a mix of container/codec corrections and a new
+per-client HDR→SDR tonemap lever; (3) the **forced-HEVC** override is decoupled
+from the HDR path so it also upgrades SDR remuxes. Same upstream Jellyfin
+(`v10.11.11`); patch series grows from 5 to 11.
+
+### Highlights
+- **HDR transcodes work with "Enhanced NVDEC decoder" ON (the upstream
+  default).** Previously HDR passthrough black-screened unless you knew to turn
+  that dashboard setting off. Now always works, either way — no configuration.
+- **Swiftfin (Apple TV) plays HDR titles cleanly.** Fixes silent TrueHD
+  direct-play, Dolby Vision Profile 7 static, and HEVC-in-MPEG-TS breakage (now
+  delivered as fMP4/CMAF, the Apple-native path). *Client note: for HDR to engage
+  the TV's HDR mode, use Swiftfin's **Native Player** — its default VLCKit engine
+  doesn't tone-map or trigger tvOS HDR switching.*
+- **Neptune AV Player is now supported** (forced HEVC + fMP4 + HDR→SDR tonemap).
+  AVPlayer cannot ingest an HDR-over-HLS stream, so its HDR titles are tonemapped
+  to SDR (HEVC preserved) rather than left black.
+- **New `LIDSLABS_FORCE_SDR_CLIENTS`** env var — force named clients' HDR titles
+  onto an HDR→SDR tonemap (codec unchanged) for AVPlayer-family clients that
+  can't parse `VIDEO-RANGE=PQ`. Runtime-tunable, no rebuild.
+- **`LIDSLABS_FORCE_HEVC_CLIENTS` now also upgrades SDR sources** and fires
+  independently of `LIDSLABS_ALLOW_HDR_TRANSCODE`. A 40 Mbps H264 SDR remux to a
+  forced client now becomes ~20 Mbps HEVC SDR instead of re-encoding to H264.
+- **Native-4K forced HEVC no longer capped below 2160p** — the profile now
+  advertises HEVC Level 5.1 so a forced 2160p transcode isn't downscaled.
+
+### Added
+- **`LIDSLABS_FORCE_SDR_CLIENTS` (patch 0011).** Comma-separated friendly client
+  names whose HDR titles are forced onto an HDR→SDR tonemap while keeping the
+  HEVC codec. Decided at PlaybackInfo by `DeviceProfile.Name` (collision-safe:
+  distinguishes `"Neptune tvOS"` from `"Neptune tvOS (Trident)"`), carried on the
+  transcode request as `VideoRangeType=SDR`, and honored at the HDR-passthrough
+  gate in `EncodingHelper.IsHdrPassthroughMode`. Fixes the AVPlayer-family black
+  screen: those clients reject the HLS master playlist's `VIDEO-RANGE=PQ` and
+  never request a segment. Inert on SDR sources and idempotent. Default `neptune_av`.
+- **Neptune AV Player support (patch 0009).** New collision-safe `neptune_av`
+  friendly name in `LIDSLABS_FORCE_HEVC_CLIENTS` (matches `"Neptune tvOS"` but not
+  Trident), paired with an fMP4 HLS transport force so forced HEVC is delivered as
+  CMAF, not MPEG-TS. Combined with `LIDSLABS_FORCE_SDR_CLIENTS=neptune_av`, AV
+  Player renders 4K HDR content as clean HEVC SDR.
+- **fMP4 HLS transport force for Swiftfin (patch 0007).** Rewrites the video HLS
+  `TranscodingProfile` container `ts→mp4` so a forced/remuxed HEVC stream is
+  delivered as fMP4 — Apple AVPlayer cannot decode HEVC-in-MPEG-TS (it showed
+  digital static).
+
+### Changed
+- **Forced-HEVC override is now source-independent (patch 0008).** The rewrite
+  that prepends `hevc` to `TranscodingProfile.VideoCodec` no longer requires an
+  HDR source and is no longer gated on `LIDSLABS_ALLOW_HDR_TRANSCODE`. Base
+  eligibility is now *client-in-list + client advertises HEVC*, so a forced client
+  gets HEVC on **SDR** sources too (an H264 SDR remux becomes HEVC SDR instead of
+  re-encoding to H264). The HDR master toggle still solely governs HDR passthrough
+  itself; the two levers are independent. The safeguard is unchanged — the
+  override never forces a codec the client didn't advertise.
+
+### Fixed
+- **HDR passthrough works with "Enhanced NVDEC decoder" enabled (patch 0006).**
+  Jellyfin's `EncodingOptions.EnableEnhancedNvdecDecoder` **defaults to ON
+  upstream**; with it on, HDR passthrough on Nvidia hard-failed with
+  `CUDA_ERROR_MAP_FAILED` (`cuvidMapVideoFrame`) — a black screen / first-frame
+  freeze, not a wrong-colors bug. Root cause: the enhanced decoder emits
+  `-hwaccel_flags +unsafe_output`, handing NVENC the decoder's un-copied CUDA
+  surfaces; the HDR path's no-op `scale_cuda=p010` passthrough then pins and
+  exhausts the finite decoder surface pool. Fix: omit **only** `+unsafe_output` on
+  the HDR-passthrough path — the enhanced decoder is kept, not replaced with
+  `*_cuvid`. Always on; every non-HDR / non-Nvidia command is byte-identical to
+  upstream. Reproduced and verified on HDR10 and Dolby Vision Profile 7. See
+  `DECISIONS.md`.
+- **Swiftfin (Apple TV) capability corrections (patch 0007).** Three always-on
+  fixes under one `User.GetClient() == "Jellyfin tvOS"` gate: (a) strip the TrueHD
+  family (`truehd`/`mlp`) from Swiftfin's audio direct-play profiles — it
+  advertises lossless direct-play it can't decode, producing **silence**; DTS-HD
+  MA is left intact (AVPlayer decodes its DTS core); (b) inject an `hevc`
+  `VideoRangeType` allow-list excluding only the DV enhancement-layer types so
+  Dolby Vision Profile 7 stream-copies with `dovi_rpu=strip` to clean HDR10 (no
+  re-encode) instead of blind-copying the dual-layer stream as **static**; (c) the
+  fMP4 transport force above. **Known residual (Swiftfin client bug, out of
+  scope):** on its default VLCKit engine the Apple TV stays in SDR display mode on
+  the transcode path — use Swiftfin's Native Player for HDR.
+- **Forced HEVC no longer capped below native 4K (patch 0010).** The forced-HEVC
+  profile now advertises HEVC Level 5.1, so a forced 2160p transcode is delivered
+  at native resolution instead of being downscaled to fit a lower level's limits.
+
+### Compatibility
+- **Verified end-to-end (2026-07-02/03, on device):**
+  - **Neptune Trident** — HEVC HDR10 / DV passthrough unchanged (not force-SDR'd;
+    plays HDR on its own path).
+  - **Neptune AV Player** — 4K HDR title → clean HEVC **SDR** (forced HEVC + fMP4 +
+    `LIDSLABS_FORCE_SDR_CLIENTS=neptune_av`); H264 SDR → HEVC SDR. Screen lights up
+    where it previously went black. HDR→SDR is inherent to AVPlayer over HLS.
+  - **Swiftfin** — Native Player: HDR direct-plays (HEVC HDR / DV P7 → clean
+    HDR10). Default (VLCKit) player: video/audio correct but TV stays SDR (client
+    bug; use Native Player).
+- **Excluded by design:**
+  - **Moonfin** — still black on HDR **and** plain H264 SDR; its `master.m3u8`
+    returns HTTP 400 on the fMP4 path independent of HDR, so `LIDSLABS_FORCE_SDR_CLIENTS`
+    is a no-op for it. A separate client/manifest bug, tracked under its own
+    investigation — not part of this release.
+  - **Streamyfin** — forced HEVC + HDR→SDR tonemap succeed server-side (correct
+    video + AC3 audio encoded) but playback is silent; a client-side audio bug.
+    `LIDSLABS_FORCE_SDR_CLIENTS` does not fix it — recheck after the next Streamyfin
+    app release.
+  - **Swiftfin AV Player mode** — cannot be force-SDR'd: Swiftfin posts an
+    identical DeviceProfile (`Name=null`, `client="Jellyfin tvOS"`) for both its
+    AVPlayer and Native players, so there is no server-side signal to target only
+    the AVPlayer mode. Use Native Player for HDR.
+
+### Documentation
+- `README.md`: documented `LIDSLABS_FORCE_SDR_CLIENTS`; updated the
+  `LIDSLABS_FORCE_HEVC_CLIENTS` description for source-independent forcing; added
+  `neptune_av` to the client mapping and a client-compatibility note (Swiftfin
+  Native Player for HDR; AVPlayer-family HDR→SDR).
+- `DECISIONS.md`: added the v0.3.2 entries — Enhanced NVDEC coexistence, Swiftfin
+  capability corrections, forced-HEVC source-independence, and the AVPlayer-family
+  HDR-over-HLS / force-SDR rationale.
+
+### Pinned to
+- Jellyfin upstream tag: `v10.11.11` (unchanged from v0.3.1)
+- Runtime base image: `jellyfin/jellyfin:10.11.11`
+- Fork commit: see `JELLYFIN_REF`
+
 ## [0.3.1+jellyfin-10.11.11] - 2026-06-29
 
 Bug-fix release: eliminates a ~6 s black-screen warmup at the start of
