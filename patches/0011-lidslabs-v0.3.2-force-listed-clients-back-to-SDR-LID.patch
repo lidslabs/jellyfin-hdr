@@ -1,4 +1,4 @@
-From 0e933751fc8ce9a35eb5840ca9b659c68e51851b Mon Sep 17 00:00:00 2001
+From 8b734d382aa5f6b4bff03b1cb8bb94f5e0b3c8ff Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Thu, 2 Jul 2026 12:17:16 -0400
 Subject: [PATCH 11/11] lidslabs v0.3.2: force listed clients back to SDR
@@ -31,12 +31,12 @@ Also add a collision-safe "moonfin" arm to LidslabsClientMatches
 gate's Debug log. Inert on SDR sources and on requests that specify no range
 or a non-SDR range; runtime-tunable with no image rebuild.
 ---
- .../Controllers/MediaInfoController.cs        | 84 +++++++++++++++++++
+ .../Controllers/MediaInfoController.cs        | 83 +++++++++++++++++++
  .../MediaEncoding/EncodingHelper.cs           | 23 +++++
- 2 files changed, 107 insertions(+)
+ 2 files changed, 106 insertions(+)
 
 diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
-index a6d3e41c56..4dac1a3525 100644
+index a6d3e41c56..3cac76ef2a 100644
 --- a/Jellyfin.Api/Controllers/MediaInfoController.cs
 +++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
 @@ -317,6 +317,81 @@ public class MediaInfoController : BaseJellyfinApiController
@@ -44,10 +44,10 @@ index a6d3e41c56..4dac1a3525 100644
              }
  
 +            // lidslabs v0.3.2 (patch 0011): force listed clients back to SDR. Some
-+            // AVPlayer-family tvOS clients (Neptune AV Player, Moonfin) advertise
-+            // HDR10 HEVC but cannot ingest an HDR-over-HLS stream: they reject the
-+            // master playlist's VIDEO-RANGE=PQ and never request a segment, so the
-+            // screen stays black. The global HDR-passthrough path
++            // AVPlayer-family tvOS clients (Neptune AV Player) advertise HDR10 HEVC
++            // but cannot ingest an HDR-over-HLS stream: they reject the master
++            // playlist's VIDEO-RANGE=PQ and never request a segment, so the screen
++            // stays black. The global HDR-passthrough path
 +            // (LIDSLABS_ALLOW_HDR_TRANSCODE) hands HDR to every client regardless of
 +            // whether it asked for it, which is what breaks them. Rather than match
 +            // these clients by User-Agent at transcode time — where AV Player and
@@ -121,19 +121,18 @@ index a6d3e41c56..4dac1a3525 100644
              // lidslabs v0.3.2: strip the TrueHD family (truehd/mlp) from Swiftfin's
              // audio direct-play profiles so a TrueHD track cannot direct-play to
              // silence. Mutates the shared profile once, pre-loop (kept out of the
-@@ -538,6 +613,15 @@ public class MediaInfoController : BaseJellyfinApiController
+@@ -538,6 +613,14 @@ public class MediaInfoController : BaseJellyfinApiController
                      //     live capture (neptune/151, app 0.1.6) — DEBUG_LOG 2026-07-01.
                      "neptune_av" => profileName.Contains("Neptune tvOS", StringComparison.OrdinalIgnoreCase)
                                      && !profileName.Contains("Trident", StringComparison.OrdinalIgnoreCase),
-+                    // lidslabs v0.3.2 (patch 0011): Moonfin (tvOS) — an AVPlayer-on-tvOS
-+                    //     client that black-screens HDR-over-HLS the same way Neptune AV
-+                    //     Player does. Its PlaybackInfo DeviceProfile.Name is "Moonfin";
-+                    //     it is a distinct app with no Trident-style sub-mode sharing one
-+                    //     UA, so a plain substring match is collision-safe. Consumed by
-+                    //     LIDSLABS_FORCE_SDR_CLIENTS to pin it to an SDR tonemap. The exact
-+                    //     Name substring is confirmed on the first dev capture (the gate's
-+                    //     Debug line logs profile.Name) before this is relied on.
-+                    "moonfin" => profileName.Contains("Moonfin", StringComparison.OrdinalIgnoreCase),
++                    // Moonfin (DeviceProfile.Name "Moonfin") is intentionally NOT mapped.
++                    //     It black-screens HDR titles too, but the 2026-07-02 dev capture
++                    //     proved force-SDR does not fix it: its master.m3u8 returns HTTP 400
++                    //     on both the HDR DV source AND a plain H264 SDR source (so the
++                    //     failure is not HDR-related and force-SDR is a no-op for it). Its
++                    //     black screen is a separate fMP4/manifest bug, tracked apart from
++                    //     patch 0011. Add an arm here only if that is ever root-caused and a
++                    //     range downgrade is shown to help. See DEBUG_LOG.md 2026-07-02.
                      _ => false,
                  };
  
