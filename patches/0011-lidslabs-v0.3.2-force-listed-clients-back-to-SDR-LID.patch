@@ -1,7 +1,7 @@
 From 8b734d382aa5f6b4bff03b1cb8bb94f5e0b3c8ff Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Thu, 2 Jul 2026 12:17:16 -0400
-Subject: [PATCH 11/12] lidslabs v0.3.2: force listed clients back to SDR
+Subject: [PATCH 11/13] lidslabs v0.3.2: force listed clients back to SDR
  (LIDSLABS_FORCE_SDR_CLIENTS)
 
 AVPlayer-family tvOS clients (Neptune AV Player, Moonfin) advertise HDR10
