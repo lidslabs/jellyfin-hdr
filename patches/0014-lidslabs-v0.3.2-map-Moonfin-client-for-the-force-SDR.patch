@@ -1,0 +1,56 @@
+From 8439b4445d239390f11a61daf7a27f26891cd5b1 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Sat, 4 Jul 2026 01:11:24 -0400
+Subject: [PATCH 14/14] lidslabs v0.3.2: map Moonfin client for the force-SDR
+ lever
+
+Add a "moonfin" arm to LidslabsClientMatches (DeviceProfile.Name
+"Moonfin") so LIDSLABS_FORCE_SDR_CLIENTS can reach it. Moonfin's HDR
+transcode washes out (upstream mpv outputProvidesHdr()/EDR-headroom
+client bug, not server-fixable); force-SDR converts it to a correct SDR
+image. Safe here: Moonfin is external/bitrate-limited only (always
+transcoding), so the direct-play-disqualifier side effect cannot hit.
+Supersedes the earlier "intentionally NOT mapped" note, which was
+premised on the pre-0012 master.m3u8 HTTP 400 (an HDR-independent bug).
+---
+ .../Controllers/MediaInfoController.cs        | 24 ++++++++++++-------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
+index df4a59b13f..6482c1952e 100644
+--- a/Jellyfin.Api/Controllers/MediaInfoController.cs
++++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
+@@ -695,14 +695,22 @@ public class MediaInfoController : BaseJellyfinApiController
+                     //     live capture (neptune/151, app 0.1.6) — DEBUG_LOG 2026-07-01.
+                     "neptune_av" => profileName.Contains("Neptune tvOS", StringComparison.OrdinalIgnoreCase)
+                                     && !profileName.Contains("Trident", StringComparison.OrdinalIgnoreCase),
+-                    // Moonfin (DeviceProfile.Name "Moonfin") is intentionally NOT mapped.
+-                    //     It black-screens HDR titles too, but the 2026-07-02 dev capture
+-                    //     proved force-SDR does not fix it: its master.m3u8 returns HTTP 400
+-                    //     on both the HDR DV source AND a plain H264 SDR source (so the
+-                    //     failure is not HDR-related and force-SDR is a no-op for it). Its
+-                    //     black screen is a separate fMP4/manifest bug, tracked apart from
+-                    //     patch 0011. Add an arm here only if that is ever root-caused and a
+-                    //     range downgrade is shown to help. See DEBUG_LOG.md 2026-07-02.
++                    // lidslabs 2026-07-04: Moonfin (DeviceProfile.Name "Moonfin", client
++                    //     "Moonfin for tvOS", confirmed in the dev capture). Mapped so it
++                    //     can take the force-SDR lever. The earlier "intentionally NOT
++                    //     mapped" note was based on the 2026-07-02 black screen, which was a
++                    //     master.m3u8 HTTP 400 (self-rejected URL, fixed by patch 0012) —
++                    //     NOT an HDR problem. With playback working, Moonfin's HDR TRANSCODE
++                    //     washes out: its mpv render path cannot engage HDR (the
++                    //     outputProvidesHdr()/EDR-headroom gate — an upstream client bug that
++                    //     is NOT server-fixable). force-SDR converts that washout into a
++                    //     correct SDR image (HEVC preserved). The usual force-SDR side effect
++                    //     (it disqualifies HDR/DV DIRECT PLAY) has no path to hit here:
++                    //     Moonfin is used only by external, bitrate-limited clients that are
++                    //     always transcoding. "Moonfin" is collision-free vs "Trident" /
++                    //     "Neptune tvOS" / "1. MPV". See DEBUG_LOG.md 2026-07-04 and
++                    //     .project/moonfin-hdr-mpv-washout-issue.md.
++                    "moonfin" => profileName.Contains("Moonfin", StringComparison.OrdinalIgnoreCase),
+                     _ => false,
+                 };
+ 
+-- 
+2.43.0
+

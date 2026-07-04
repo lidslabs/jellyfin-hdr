@@ -1,7 +1,7 @@
 From 034bff8d54aa0bcb40ebf1aa7d0058985544ac25 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Fri, 3 Jul 2026 23:43:15 -0400
-Subject: [PATCH 13/13] lidslabs v0.3.2: rewrite PlaybackInfo delivered range
+Subject: [PATCH 13/14] lidslabs v0.3.2: rewrite PlaybackInfo delivered range
  DV->HDR10 for HDR-passthrough transcode (patch 0013)
 
 Jellyfin returns the source MediaStreams verbatim even when a DV/HDR source
