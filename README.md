@@ -240,6 +240,7 @@ so it can be opted out of per-server.
 
 ## Source and provenance
 
+- What we change in Jellyfin: [`PATCHES.md`](./PATCHES.md) — the complete change surface (exactly 5 upstream files, no files added), by file and by patch
 - Patches (build input): [`patches/`](./patches/) - regenerated from the fork at release time
 - Pinned fork commit SHA: see [`JELLYFIN_REF`](./JELLYFIN_REF) — the immutable source of this release's patches
 - Fork pin tag: each release's source commit is tagged `jellyfin-hdr/vX.Y.Z` in the [`lidslabs/jellyfin`](https://github.com/lidslabs/jellyfin/tags) fork
