@@ -1,7 +1,7 @@
-From 8439b4445d239390f11a61daf7a27f26891cd5b1 Mon Sep 17 00:00:00 2001
+From 164ae7d45ee993a3ae0da58e9f451819af56f28d Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Sat, 4 Jul 2026 01:11:24 -0400
-Subject: [PATCH 14/15] lidslabs v0.3.2: map Moonfin client for the force-SDR
+Subject: [PATCH 14/14] lidslabs v0.3.2: map Moonfin client for the force-SDR
  lever
 
 Add a "moonfin" arm to LidslabsClientMatches (DeviceProfile.Name
@@ -17,10 +17,10 @@ premised on the pre-0012 master.m3u8 HTTP 400 (an HDR-independent bug).
  1 file changed, 16 insertions(+), 8 deletions(-)
 
 diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
-index df4a59b13f..6482c1952e 100644
+index 317b3a6c9a..22f160f727 100644
 --- a/Jellyfin.Api/Controllers/MediaInfoController.cs
 +++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
-@@ -695,14 +695,22 @@ public class MediaInfoController : BaseJellyfinApiController
+@@ -715,14 +715,22 @@ public class MediaInfoController : BaseJellyfinApiController
                      //     live capture (neptune/151, app 0.1.6) — DEBUG_LOG 2026-07-01.
                      "neptune_av" => profileName.Contains("Neptune tvOS", StringComparison.OrdinalIgnoreCase)
                                      && !profileName.Contains("Trident", StringComparison.OrdinalIgnoreCase),

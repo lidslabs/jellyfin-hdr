@@ -1,7 +1,7 @@
 From 53db5536237001130caadf9a84546525916d6de5 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Mon, 29 Jun 2026 21:00:53 -0400
-Subject: [PATCH 06/15] lidslabs v0.3.2: drop enhanced-NVDEC +unsafe_output for
+Subject: [PATCH 06/14] lidslabs v0.3.2: drop enhanced-NVDEC +unsafe_output for
  HDR passthrough
 
 Enhanced NVDEC (EnableEnhancedNvdecDecoder, default-on upstream) emits
