@@ -109,6 +109,7 @@ User-Agent (one app can expose several player modes under the same UA):
 | `neptune` | Neptune (Trident player) |
 | `streamyfin` | Streamyfin (MPV player) |
 | `neptune_av` | Neptune (AV Player) — pair with `LIDSLABS_FORCE_SDR_CLIENTS`, see below |
+| `moonfin` | Moonfin (Apple TV) — use with `LIDSLABS_FORCE_SDR_CLIENTS`, see below |
 
 Names not in the table are silently ignored. Adding a new client is a code change
 (a reviewable mapping entry), not just an env var edit — by design, so only
@@ -142,6 +143,12 @@ this image can remove; SDR that plays beats HDR that black-screens.
   `LIDSLABS_FORCE_SDR_CLIENTS` because it posts an identical profile for both its
   players, so there's no way to target only the AVPlayer mode without also
   degrading the working Native-Player HDR path.
+- **Moonfin** — supported: list `moonfin` in `LIDSLABS_FORCE_SDR_CLIENTS`. Its mpv
+  render path can't display an HDR transcode correctly (the display switches to
+  HDR but the picture washes out — an upstream client limitation), so its HDR/DV
+  titles are tonemapped to clean HEVC SDR and reported as SDR (no Dolby Vision
+  banner, no HDR pop). Recommended for external/bandwidth-limited use, where
+  playback is always transcoding anyway.
 
 The list is inert on SDR sources (nothing to tonemap) and, like the forced-HEVC
 list, should shrink as clients gain real HDR-over-HLS support.

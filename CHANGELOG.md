@@ -5,14 +5,16 @@
 > `VERSION` 0.3.1 → 0.3.2.
 
 Bug-fix bundle focused on **HDR that works whatever the client and decoder
-setting are**. Three classes of fix: (1) HDR passthrough now works with
+setting are**. Four classes of fix: (1) HDR passthrough now works with
 Jellyfin's **"Enhanced NVDEC decoder"** left on (its upstream default), instead
 of hard-failing to a black screen; (2) **AVPlayer-family Apple TV clients**
-(Swiftfin, Neptune AV Player) — which reject HDR-over-HLS and previously went
-black or silent — now render, via a mix of container/codec corrections and a new
+(Swiftfin, Neptune AV Player, Moonfin) — which reject HDR-over-HLS and previously
+went black or silent — now render, via a mix of container/codec corrections and a
 per-client HDR→SDR tonemap lever; (3) the **forced-HEVC** override is decoupled
-from the HDR path so it also upgrades SDR remuxes. Same upstream Jellyfin
-(`v10.11.11`); patch series grows from 5 to 11.
+from the HDR path so it also upgrades SDR remuxes; (4) **transcoded `PlaybackInfo`
+now describes the delivered stream**, not the source — so a client keys its
+display mode (DV / HDR10 / SDR) off what it actually receives. Same upstream
+Jellyfin (`v10.11.11`); patch series grows from 5 to 15.
 
 ### Highlights
 - **HDR transcodes work with "Enhanced NVDEC decoder" ON (the upstream
@@ -34,6 +36,14 @@ from the HDR path so it also upgrades SDR remuxes. Same upstream Jellyfin
   forced client now becomes ~20 Mbps HEVC SDR instead of re-encoding to H264.
 - **Native-4K forced HEVC no longer capped below 2160p** — the profile now
   advertises HEVC Level 5.1 so a forced 2160p transcode isn't downscaled.
+- **Moonfin (Apple TV) is now supported.** Fixes its black screen (the server was
+  rejecting its own manifest URL) and its Dolby Vision display-mode misfire (the
+  TV engaged DV over an SDR/HDR10 transcode). Moonfin's HDR titles are tonemapped
+  to SDR (HEVC preserved), the correct outcome for its transcode path.
+- **Transcoded playback info now reports the delivered stream.** A client that
+  reads `VideoRangeType` to pick its display mode (DV vs HDR10 vs SDR) now sees
+  what it actually receives, not the source — no more DV engaged over an HDR10 or
+  SDR transcode.
 
 ### Added
 - **`LIDSLABS_FORCE_SDR_CLIENTS` (patch 0011).** Comma-separated friendly client
@@ -91,6 +101,28 @@ from the HDR path so it also upgrades SDR remuxes. Same upstream Jellyfin
 - **Forced HEVC no longer capped below native 4K (patch 0010).** The forced-HEVC
   profile now advertises HEVC Level 5.1, so a forced 2160p transcode is delivered
   at native resolution instead of being downscaled to fit a lower level's limits.
+- **Moonfin black screen — `master.m3u8` HTTP 400 (patch 0012).** Moonfin posts a
+  9-codec HLS-fMP4 profile, so the server's own StreamBuilder emitted a 42-char
+  `AudioCodec=` query value that overflowed the stock 40-char validation regex on
+  the manifest endpoint — ASP.NET model validation then 400'd the server's own
+  generated URL before playback could start. Widened the cap 40 → 80; the regex
+  shape is otherwise unchanged. Self-inflicted, not a Moonfin bug (clients with
+  shorter codec lists were unaffected).
+- **Transcoded `PlaybackInfo` describes the delivered stream, not the source
+  (patches 0013 + 0015).** On a transcode, the returned video stream is rewritten
+  to report the range that is actually delivered: a Dolby Vision source delivered
+  as an HDR10/HLG passthrough now reports HDR10/HLG (DV descriptors cleared), and
+  a source forced to an HDR→SDR tonemap (see `LIDSLABS_FORCE_SDR_CLIENTS`) now
+  reports SDR (`bt709`). Fixes clients (e.g. Moonfin) that read `VideoRangeType`
+  to drive tvOS display-mode switching and were engaging Dolby Vision over a
+  non-DV transcode → washed-out or wrong-gamut image. Response-only (the file's
+  own metadata is untouched); the source still transcodes (direct play unaffected).
+- **Moonfin mapped for the force-SDR lever (patch 0014).** Added the `moonfin`
+  friendly name to the client map so it can be listed in `LIDSLABS_FORCE_SDR_CLIENTS`.
+  Moonfin's mpv render path cannot correctly display an HDR transcode (an upstream
+  client limitation), so tonemapping its HDR titles to SDR (HEVC preserved) is the
+  correct outcome; combined with patch 0015 the client is told the stream is SDR,
+  so it stays out of Dolby Vision / HDR display mode.
 
 ### Compatibility
 - **Verified end-to-end (2026-07-02/03, on device):**
@@ -102,11 +134,13 @@ from the HDR path so it also upgrades SDR remuxes. Same upstream Jellyfin
   - **Swiftfin** — Native Player: HDR direct-plays (HEVC HDR / DV P7 → clean
     HDR10). Default (VLCKit) player: video/audio correct but TV stays SDR (client
     bug; use Native Player).
+  - **Moonfin (2026-07-03/04)** — playback restored (was black: server was 400'ing
+    its own manifest) and no longer misfires into Dolby Vision: with
+    `LIDSLABS_FORCE_SDR_CLIENTS=moonfin`, HDR/DV titles tonemap to clean HEVC **SDR**
+    and the client is told the stream is SDR (no DV banner, no HDR pop). HDR→SDR is
+    the correct outcome — Moonfin's mpv path can't render an HDR transcode (upstream
+    client bug). Recommended for external/bandwidth-limited (always-transcoding) use.
 - **Excluded by design:**
-  - **Moonfin** — still black on HDR **and** plain H264 SDR; its `master.m3u8`
-    returns HTTP 400 on the fMP4 path independent of HDR, so `LIDSLABS_FORCE_SDR_CLIENTS`
-    is a no-op for it. A separate client/manifest bug, tracked under its own
-    investigation — not part of this release.
   - **Streamyfin** — forced HEVC + HDR→SDR tonemap succeed server-side (correct
     video + AC3 audio encoded) but playback is silent; a client-side audio bug.
     `LIDSLABS_FORCE_SDR_CLIENTS` does not fix it — recheck after the next Streamyfin
@@ -122,8 +156,10 @@ from the HDR path so it also upgrades SDR remuxes. Same upstream Jellyfin
   `neptune_av` to the client mapping and a client-compatibility note (Swiftfin
   Native Player for HDR; AVPlayer-family HDR→SDR).
 - `DECISIONS.md`: added the v0.3.2 entries — Enhanced NVDEC coexistence, Swiftfin
-  capability corrections, forced-HEVC source-independence, and the AVPlayer-family
-  HDR-over-HLS / force-SDR rationale.
+  capability corrections, forced-HEVC source-independence, the AVPlayer-family
+  HDR-over-HLS / force-SDR rationale, and the Moonfin fixes (self-generated-URL
+  400 regex-cap; transcoded `PlaybackInfo` describing the delivered stream).
+- `README.md`: noted Moonfin as a supported (SDR) AVPlayer-family client.
 
 ### Pinned to
 - Jellyfin upstream tag: `v10.11.11` (unchanged from v0.3.1)

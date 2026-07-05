@@ -184,6 +184,75 @@ Status: Implemented on mainline; ships in v0.3.2. Supersedes the v0.3.0 forced-H
 
 ---
 
+## Transcoded PlaybackInfo describes the delivered stream, not the source
+
+Status: Implemented on mainline; ships in v0.3.2 (patches 0013 + 0015).
+
+### Problem
+- When we transcode, we change the stream — a Dolby Vision source may be delivered as an
+  HDR10/HLG passthrough, or (for force-SDR clients) tonemapped to SDR. But Jellyfin's
+  `PlaybackInfo` response kept describing the **source**: it still reported
+  `VideoRangeType: DOVIWithEL` (and the DV profile/level/RPU descriptors) even though the
+  bitstream and HLS manifest we actually emit carry clean HDR10 or SDR.
+- Clients that read `VideoRangeType` to choose a tvOS display mode then engage **Dolby
+  Vision over a non-DV stream**. On Moonfin this forced the Apple TV into DV for an HDR10
+  or SDR transcode → a washed-out / wrong-gamut picture, even though every byte we sent was
+  correct.
+
+### Decision
+- After the play-method decision is final, rewrite the **returned** video stream of a
+  transcoded source to describe what is actually delivered:
+  - **HDR passthrough** (DV source kept as HDR10/HLG): clear the DV descriptors so the range
+    reports HDR10 or HLG.
+  - **Force-SDR** (an HDR/DV source tonemapped for an AVPlayer-family client): clear the DV
+    descriptors and set the color tags to `bt709`, so the range reports SDR.
+- **Response-only.** The item's stored metadata and the physical file are never touched (the
+  file genuinely *is* Dolby Vision Profile 7). `SupportsDirectPlay`/`DirectStream` stay
+  false with the transcode URL present, so no client flips to direct-playing the untouched
+  source off the rewritten descriptors. Scoped to transcoded sources; direct play is untouched.
+
+### Why this is broader than one client
+- The returned stream should always describe the *delivered* stream because transcoding
+  always changes it — this is the honest answer for any client that keys display behavior off
+  `VideoRangeType`, not a Moonfin-specific patch. It also covers the force-SDR case (a
+  DV-keying client would otherwise engage DV over an SDR stream).
+- The two branches were introduced together but gated separately, which surfaced a real
+  interaction bug: the passthrough rewrite originally skipped force-SDR clients, so once a
+  force-SDR, range-keying client (Moonfin) was added the source DV descriptors leaked back
+  through and the DV misfire returned. The fix runs the rewrite for force-SDR clients too.
+  Lesson recorded in the private debug log: two patches touching the same response field under
+  different conditions must each be re-checked against every client the other newly matches.
+
+---
+
+## Moonfin — supported (SDR), and a self-generated manifest URL that 400'd
+
+Status: Implemented on mainline; ships in v0.3.2 (patches 0012 + 0014).
+
+### Problem — the black screen was our own 400
+- Moonfin went black on **every** title, HDR or SDR. The cause was not HDR at all: Moonfin
+  posts a 9-codec HLS-fMP4 transcoding profile, so the server's own StreamBuilder generated a
+  `master.m3u8` URL whose `AudioCodec=` value was 42 characters. A stock upstream validation
+  regex caps that query parameter at 40 characters, so ASP.NET Core model validation rejected
+  the server's **own** generated URL with a clean HTTP 400 before playback began.
+- We widened the cap 40 → 80 (regex shape otherwise unchanged). This is the tightest fix;
+  dropping a codec from the emitted list was rejected because that list is dual-use for fMP4
+  direct play. Self-inflicted, not a Moonfin bug — clients with shorter codec lists never hit it.
+
+### Decision — Moonfin is a force-SDR client
+- Once playback worked, Moonfin's remaining issue was that its **mpv** render path cannot
+  correctly display an HDR transcode (an upstream client limitation: the display switches to
+  HDR but the renderer targets SDR, so HDR content washes out). This is not server-fixable.
+- Moonfin is therefore mapped for `LIDSLABS_FORCE_SDR_CLIENTS`, so its HDR/DV titles are
+  tonemapped to clean HEVC **SDR** and (via the delivered-range rewrite above) reported as SDR
+  — no DV banner, no HDR display switch. The usual force-SDR objection (it disqualifies HDR/DV
+  *direct play*) does not apply to how Moonfin is used here: it serves external,
+  bandwidth-limited clients that are always transcoding, so there is effectively no direct
+  play to lose, and every HDR title would otherwise wash out. SDR that renders correctly beats
+  HDR that doesn't.
+
+---
+
 ## Faster transcode start — persist the CUDA JIT cache
 
 Status: Implemented on `feature/fast-transcode-start`; not yet released.
