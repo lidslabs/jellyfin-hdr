@@ -1,8 +1,5 @@
 # Changelog
-## [Unreleased] — targets 0.3.2+jellyfin-10.11.11
-
-> Staged on `main`, not yet cut. The release step dates this heading and bumps
-> `VERSION` 0.3.1 → 0.3.2.
+## [0.3.2+jellyfin-10.11.11] - 2026-07-06
 
 Bug-fix bundle focused on **HDR that works whatever the client and decoder
 setting are**. Four classes of fix: (1) HDR passthrough now works with
