@@ -14,7 +14,7 @@ per-client HDR→SDR tonemap lever; (3) the **forced-HEVC** override is decouple
 from the HDR path so it also upgrades SDR remuxes; (4) **transcoded `PlaybackInfo`
 now describes the delivered stream**, not the source — so a client keys its
 display mode (DV / HDR10 / SDR) off what it actually receives. Same upstream
-Jellyfin (`v10.11.11`); patch series grows from 5 to 15.
+Jellyfin (`v10.11.11`); patch series grows from 5 to 14.
 
 ### Highlights
 - **HDR transcodes work with "Enhanced NVDEC decoder" ON (the upstream
@@ -109,7 +109,7 @@ Jellyfin (`v10.11.11`); patch series grows from 5 to 15.
   shape is otherwise unchanged. Self-inflicted, not a Moonfin bug (clients with
   shorter codec lists were unaffected).
 - **Transcoded `PlaybackInfo` describes the delivered stream, not the source
-  (patches 0013 + 0015).** On a transcode, the returned video stream is rewritten
+  (patch 0013).** On a transcode, the returned video stream is rewritten
   to report the range that is actually delivered: a Dolby Vision source delivered
   as an HDR10/HLG passthrough now reports HDR10/HLG (DV descriptors cleared), and
   a source forced to an HDR→SDR tonemap (see `LIDSLABS_FORCE_SDR_CLIENTS`) now
@@ -121,7 +121,7 @@ Jellyfin (`v10.11.11`); patch series grows from 5 to 15.
   friendly name to the client map so it can be listed in `LIDSLABS_FORCE_SDR_CLIENTS`.
   Moonfin's mpv render path cannot correctly display an HDR transcode (an upstream
   client limitation), so tonemapping its HDR titles to SDR (HEVC preserved) is the
-  correct outcome; combined with patch 0015 the client is told the stream is SDR,
+  correct outcome; combined with patch 0013 the client is told the stream is SDR,
   so it stays out of Dolby Vision / HDR display mode.
 
 ### Compatibility
@@ -160,6 +160,11 @@ Jellyfin (`v10.11.11`); patch series grows from 5 to 15.
   HDR-over-HLS / force-SDR rationale, and the Moonfin fixes (self-generated-URL
   400 regex-cap; transcoded `PlaybackInfo` describing the delivered stream).
 - `README.md`: noted Moonfin as a supported (SDR) AVPlayer-family client.
+- `README.md`: added a **Client compatibility** matrix (per player: HDR result,
+  delivered codec, required config) and gave the friendly-name mapping table a
+  Lever(s) column so it's clear which names feed forced-HEVC vs forced-SDR.
+- `PATCHES.md` (new): the complete change surface — the 5 upstream files touched
+  and the per-patch index (0001–0014).
 
 ### Pinned to
 - Jellyfin upstream tag: `v10.11.11` (unchanged from v0.3.1)
