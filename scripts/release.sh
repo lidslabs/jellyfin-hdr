@@ -7,9 +7,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [[ "$CURRENT_BRANCH" != "main" ]]; then
-    echo "ERROR: releases are cut from main, but HEAD is '$CURRENT_BRANCH'." >&2
-    echo "Merge the feature branch into main (via PR), then re-run from main." >&2
+if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != release/* ]]; then
+    echo "ERROR: releases are cut from main or a release/* branch, but HEAD is '$CURRENT_BRANCH'." >&2
+    echo "Cut pre-release RCs from release/<ver>; land on main for the final :latest release." >&2
     exit 1
 fi
 
@@ -29,6 +29,11 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
 fi
 
 if [[ ! "$TAG" =~ -(rc|alpha|beta|dev)\. ]]; then
+    if [[ "$CURRENT_BRANCH" != "main" ]]; then
+        echo "ERROR: normal releases (:latest) must be cut from main, not '$CURRENT_BRANCH'." >&2
+        echo "Merge release/* into main first, then cut the final tag from main." >&2
+        exit 1
+    fi
     echo "==> $TAG is a NORMAL release (will appear as 'Latest' on GitHub)."
     read -r -p "==> Continue? [y/N] " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
@@ -49,8 +54,8 @@ fi
 echo "==> Tagging $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 
-echo "==> Pushing main + tag"
-git push origin main
+echo "==> Pushing $CURRENT_BRANCH + tag"
+git push origin "$CURRENT_BRANCH"
 git push origin "$TAG"
 
 echo

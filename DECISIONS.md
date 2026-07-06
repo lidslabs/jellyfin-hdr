@@ -1,6 +1,6 @@
 ## Enhanced NVDEC coexistence — keep HDR working with the decoder default-on
 
-Status: Implemented on mainline; not yet released (ships in v0.3.2).
+Status: Shipped in v0.3.2.
 
 ### Problem
 - Jellyfin's **"Enable enhanced NVDEC decoder"** transcoding setting
@@ -45,7 +45,7 @@ Status: Implemented on mainline; not yet released (ships in v0.3.2).
 
 ## AVPlayer-family clients can't ingest HDR-over-HLS — force them to SDR
 
-Status: Implemented on mainline; ships in v0.3.2. Env var `LIDSLABS_FORCE_SDR_CLIENTS`.
+Status: Shipped in v0.3.2. Env var `LIDSLABS_FORCE_SDR_CLIENTS`.
 
 ### Problem
 - With HDR passthrough on (`LIDSLABS_ALLOW_HDR_TRANSCODE=1`), the image tags an HLS
@@ -91,7 +91,7 @@ Status: Implemented on mainline; ships in v0.3.2. Env var `LIDSLABS_FORCE_SDR_CL
 
 ## Neptune AV Player — supported via forced HEVC + fMP4 + forced SDR
 
-Status: Implemented on mainline; ships in v0.3.2 (friendly name `neptune_av`).
+Status: Shipped in v0.3.2 (friendly name `neptune_av`).
 
 ### Problem
 - Neptune's **AV Player** mode advertises HEVC HDR10 but historically rendered **black** on
@@ -121,7 +121,7 @@ Status: Implemented on mainline; ships in v0.3.2 (friendly name `neptune_av`).
 
 ## Swiftfin (Apple TV) — correct the DeviceProfile it over-claims
 
-Status: Implemented on mainline; ships in v0.3.2. Always on, code-scoped to Swiftfin.
+Status: Shipped in v0.3.2. Always on, code-scoped to Swiftfin.
 
 ### Problem
 - Swiftfin (Apple TV, `User.GetClient() == "Jellyfin tvOS"`, `DeviceProfile.Name=null`)
@@ -161,7 +161,7 @@ Status: Implemented on mainline; ships in v0.3.2. Always on, code-scoped to Swif
 
 ## Forced HEVC is a codec-preference lever, independent of the HDR path
 
-Status: Implemented on mainline; ships in v0.3.2. Supersedes the v0.3.0 forced-HEVC scoping.
+Status: Shipped in v0.3.2. Supersedes the v0.3.0 forced-HEVC scoping.
 
 ### What changed
 - The v0.3.0 forced-HEVC override only rewrote `TranscodingProfile.VideoCodec` to prepend
@@ -186,7 +186,7 @@ Status: Implemented on mainline; ships in v0.3.2. Supersedes the v0.3.0 forced-H
 
 ## Transcoded PlaybackInfo describes the delivered stream, not the source
 
-Status: Implemented on mainline; ships in v0.3.2 (patches 0013 + 0015).
+Status: Shipped in v0.3.2 (patch 0013).
 
 ### Problem
 - When we transcode, we change the stream — a Dolby Vision source may be delivered as an
@@ -216,18 +216,19 @@ Status: Implemented on mainline; ships in v0.3.2 (patches 0013 + 0015).
   always changes it — this is the honest answer for any client that keys display behavior off
   `VideoRangeType`, not a Moonfin-specific patch. It also covers the force-SDR case (a
   DV-keying client would otherwise engage DV over an SDR stream).
-- The two branches were introduced together but gated separately, which surfaced a real
-  interaction bug: the passthrough rewrite originally skipped force-SDR clients, so once a
-  force-SDR, range-keying client (Moonfin) was added the source DV descriptors leaked back
-  through and the DV misfire returned. The fix runs the rewrite for force-SDR clients too.
-  Lesson recorded in the private debug log: two patches touching the same response field under
-  different conditions must each be re-checked against every client the other newly matches.
+- The two branches (originally shipped as two patches, since consolidated into 0013) were
+  introduced together but gated separately, which surfaced a real interaction bug: the
+  passthrough rewrite originally skipped force-SDR clients, so once a force-SDR, range-keying
+  client (Moonfin) was added the source DV descriptors leaked back through and the DV misfire
+  returned. The fix runs the rewrite for force-SDR clients too. Lesson recorded in the private
+  debug log: two branches touching the same response field under different conditions must each
+  be re-checked against every client the other newly matches.
 
 ---
 
 ## Moonfin — supported (SDR), and a self-generated manifest URL that 400'd
 
-Status: Implemented on mainline; ships in v0.3.2 (patches 0012 + 0014).
+Status: Shipped in v0.3.2 (patches 0012 + 0014).
 
 ### Problem — the black screen was our own 400
 - Moonfin went black on **every** title, HDR or SDR. The cause was not HDR at all: Moonfin
@@ -255,7 +256,7 @@ Status: Implemented on mainline; ships in v0.3.2 (patches 0012 + 0014).
 
 ## Faster transcode start — persist the CUDA JIT cache
 
-Status: Implemented on `feature/fast-transcode-start`; not yet released.
+Status: Shipped in v0.3.1.
 
 ### Problem
 - On supported clients a transcode starts with a black screen until the first

@@ -20,7 +20,7 @@ docker pull ghcr.io/lidslabs/jellyfin-hdr:latest
 Specific version (recommended for production):
 
 ```sh
-docker pull ghcr.io/lidslabs/jellyfin-hdr:v0.3.0-jellyfin-10.11.11
+docker pull ghcr.io/lidslabs/jellyfin-hdr:v0.3.2-jellyfin-10.11.11
 ```
 
 Note the dash separator: git tags use `+` (semver build metadata), Docker image
@@ -55,7 +55,7 @@ A copyable version lives at [`docker-compose.example.yml`](./docker-compose.exam
 ```yaml
 services:
   jellyfin:
-    image: ghcr.io/lidslabs/jellyfin-hdr:v0.3.0-jellyfin-10.11.11
+    image: ghcr.io/lidslabs/jellyfin-hdr:v0.3.2-jellyfin-10.11.11
     container_name: jellyfin
     restart: unless-stopped
     # GPU via the NVIDIA Container Toolkit (Compose device reservation):
@@ -104,12 +104,16 @@ advertises, and it's independent of the HDR master toggle.
 Clients are matched by **friendly name → `DeviceProfile.Name`** mapping, not by
 User-Agent (one app can expose several player modes under the same UA):
 
-| Friendly name | Matches client mode |
-| --- | --- |
-| `neptune` | Neptune (Trident player) |
-| `streamyfin` | Streamyfin (MPV player) |
-| `neptune_av` | Neptune (AV Player) — pair with `LIDSLABS_FORCE_SDR_CLIENTS`, see below |
-| `moonfin` | Moonfin (Apple TV) — use with `LIDSLABS_FORCE_SDR_CLIENTS`, see below |
+The same friendly names feed both this forced-HEVC lever and the forced-SDR lever
+below; the **Lever(s)** column shows which env var(s) each name belongs in. A name is
+only acted on if it appears in the matching `LIDSLABS_FORCE_*` variable.
+
+| Friendly name | Matches client mode | Lever(s) |
+| --- | --- | --- |
+| `neptune` | Neptune (Trident player) | `LIDSLABS_FORCE_HEVC_CLIENTS` |
+| `streamyfin` | Streamyfin (MPV player) | `LIDSLABS_FORCE_HEVC_CLIENTS` |
+| `neptune_av` | Neptune (AV Player) | `LIDSLABS_FORCE_HEVC_CLIENTS` **and** `LIDSLABS_FORCE_SDR_CLIENTS` (see below) |
+| `moonfin` | Moonfin (Apple TV) | `LIDSLABS_FORCE_SDR_CLIENTS` only (see below) |
 
 Names not in the table are silently ignored. Adding a new client is a code change
 (a reviewable mapping entry), not just an env var edit — by design, so only
@@ -152,6 +156,40 @@ this image can remove; SDR that plays beats HDR that black-screens.
 
 The list is inert on SDR sources (nothing to tonemap) and, like the forced-HEVC
 list, should shrink as clients gain real HDR-over-HLS support.
+
+## Client compatibility
+
+Behavior is player-specific: one app can expose several player engines that
+handle HDR very differently, so this matrix goes down to the player, not just the
+app. **HDR result** is one of:
+
+- **HDR10 passthrough** — HDR metadata reaches the screen; the source's HDR10 /
+  HDR10+ / HLG (or a DV Profile 7 source's HDR10 base) is preserved through the
+  transcode.
+- **HDR→SDR tonemap** — the codec stays HEVC (efficiency retained) but the picture
+  is tonemapped to SDR, for clients that can't ingest HDR-over-HLS. See
+  [AVPlayer clients and HDR](#avplayer-clients-and-hdr).
+- **SDR (client bug)** — the stream we send carries HDR, but the client's own
+  player doesn't switch the TV into HDR mode.
+
+"Config" is the friendly name(s) to add to `LIDSLABS_FORCE_HEVC_CLIENTS` /
+`LIDSLABS_FORCE_SDR_CLIENTS`. All of this requires the master toggle
+`LIDSLABS_ALLOW_HDR_TRANSCODE=1` for anything HDR to happen.
+
+| Client — player | HDR result | Codec delivered | Config (friendly name → lever) | Notes |
+| --- | --- | --- | --- | --- |
+| **Neptune — Trident** | HDR10 passthrough | HEVC HDR10 (native 4K) | `neptune` → HEVC | Plays HDR on its own path; AC3 5.1 sidecar |
+| **Neptune — AV Player** | HDR→SDR tonemap | HEVC SDR | `neptune_av` → HEVC **+** SDR | AVPlayer can't ingest HDR-over-HLS; fMP4 forced |
+| **Swiftfin — Native Player** | HDR10 passthrough | HEVC HDR10 | automatic (always-on Swiftfin fixes) | Use the Native Player to engage tvOS HDR |
+| **Swiftfin — default (VLCKit)** | SDR (client bug) | HEVC | automatic | Video/audio correct, but TV stays SDR — use Native Player |
+| **Streamyfin** | HDR10 passthrough | HEVC HDR10 | `streamyfin` → HEVC | Silent audio on this path (client-side bug); recheck after next app release |
+| **Moonfin** | HDR→SDR tonemap | HEVC SDR | `moonfin` → SDR | mpv can't render an HDR transcode; intended for external / bandwidth-limited use |
+| **Wholphin** | HDR10 passthrough | HEVC HDR10 | none | Requests HEVC HDR by default; no override needed |
+| **Jellyfin Web / Mobile / Android** | stock upstream behavior | — | none | No lidslabs client targeting; unchanged from upstream |
+
+Verified on-device 2026-07-04 on Nvidia NVENC (RTX-class). The forced-HEVC and
+forced-SDR lists are workarounds that should **shrink** as clients fix their codec
+and HDR-over-HLS handling — see the two sections above.
 
 ## Faster transcode start
 
@@ -240,6 +278,7 @@ so it can be opted out of per-server.
 
 ## Source and provenance
 
+- What we change in Jellyfin: [`PATCHES.md`](./PATCHES.md) — the complete change surface (exactly 5 upstream files, no files added), by file and by patch
 - Patches (build input): [`patches/`](./patches/) - regenerated from the fork at release time
 - Pinned fork commit SHA: see [`JELLYFIN_REF`](./JELLYFIN_REF) — the immutable source of this release's patches
 - Fork pin tag: each release's source commit is tagged `jellyfin-hdr/vX.Y.Z` in the [`lidslabs/jellyfin`](https://github.com/lidslabs/jellyfin/tags) fork
