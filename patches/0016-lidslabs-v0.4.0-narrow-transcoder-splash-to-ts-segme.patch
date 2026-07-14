@@ -1,0 +1,38 @@
+From d638b9ef0937e3d2b240a42c6886a5283560470e Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Mon, 13 Jul 2026 23:19:23 -0400
+Subject: [PATCH 16/16] lidslabs v0.4.0: narrow transcoder splash to ts segment
+ containers
+
+Device matrix (2026-07-10): ts seam clean on Wholphin and the Android TV
+Jellyfin app; fMP4 seam failed on both fMP4 clients (AVPlayer stalls at the
+discontinuity, mpv reuses the splash init and garbles content video). fMP4
+sessions now skip splash and warm-start entirely - byte-identical stock
+behavior. The mp4 splice/rendition code stays for a possible parameter-matched
+revival.
+---
+ Jellyfin.Api/Controllers/DynamicHlsController.cs | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/Jellyfin.Api/Controllers/DynamicHlsController.cs b/Jellyfin.Api/Controllers/DynamicHlsController.cs
+index 1fe5c7ee8b..3d38728f29 100644
+--- a/Jellyfin.Api/Controllers/DynamicHlsController.cs
++++ b/Jellyfin.Api/Controllers/DynamicHlsController.cs
+@@ -2353,8 +2353,13 @@ public class DynamicHlsController : BaseJellyfinApiController
+             }
+ 
+             var containerName = EncodingHelper.GetSegmentFileExtension(state.Request.SegmentContainer).TrimStart('.');
+-            if (containerName is not ("ts" or "mp4"))
++
++            // ts-only: fMP4 players can't be trusted across the init-segment switch at the
++            // discontinuity (AVPlayer stalls at the seam; mpv keeps the splash init and
++            // garbles the content video). Device matrix 2026-07-10.
++            if (containerName is not "ts")
+             {
++                _logger.LogDebug("lidslabs: splash skipped for segment container {Container} (ts-only)", containerName);
+                 return null;
+             }
+ 
+-- 
+2.43.0
+
