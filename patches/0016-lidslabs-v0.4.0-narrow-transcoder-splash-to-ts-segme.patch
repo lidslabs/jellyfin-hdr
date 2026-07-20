@@ -1,7 +1,7 @@
 From d638b9ef0937e3d2b240a42c6886a5283560470e Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Mon, 13 Jul 2026 23:19:23 -0400
-Subject: [PATCH 16/16] lidslabs v0.4.0: narrow transcoder splash to ts segment
+Subject: [PATCH 16/17] lidslabs v0.4.0: narrow transcoder splash to ts segment
  containers
 
 Device matrix (2026-07-10): ts seam clean on Wholphin and the Android TV
