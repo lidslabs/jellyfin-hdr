@@ -1,7 +1,7 @@
 From 2b5146206b9d7b22a1d0ae411aed94768fa914b1 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Tue, 21 Jul 2026 00:27:07 -0400
-Subject: [PATCH 18/18] lidslabs v0.4.0: retune Swiftfin corrections for v1.5
+Subject: [PATCH 18/19] lidslabs v0.4.0: retune Swiftfin corrections for v1.5
  two-engine profiles
 
 Swiftfin tvOS v1.5 ships two player engines (VLCKit + AVPlayer) that post

@@ -1,7 +1,7 @@
 From dafcd073afdd68083a5b17c96a46b3a946eb51f2 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Fri, 10 Jul 2026 14:27:39 -0400
-Subject: [PATCH 15/18] lidslabs v0.4.0: transcoder splash for HLS transcode
+Subject: [PATCH 15/19] lidslabs v0.4.0: transcoder splash for HLS transcode
  starts (LIDSLABS_TRANSCODE_SPLASH)
 
 Masks the ~5-6s transcode-start dead window (black screen, no buffering UI on
