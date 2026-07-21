@@ -1,7 +1,7 @@
 From f134b35cb9bd429f15c78d9083e928a0463e666c Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Mon, 20 Jul 2026 12:41:47 -0400
-Subject: [PATCH 17/17] lidslabs v0.4.0: fix Swiftfin client-name gate
+Subject: [PATCH 17/18] lidslabs v0.4.0: fix Swiftfin client-name gate
  (Jellyfin tvOS -> Swiftfin tvOS)
 
 Swiftfin tvOS's full release (first seen as v1.5) renamed its authenticated
