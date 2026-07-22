@@ -16,6 +16,9 @@
 ARG UPSTREAM_VERSION=10.11.10
 ARG JELLYFIN_REF=unknown
 ARG DOTNET_VERSION=9.0
+# NVEncC engine pin (see the nvencc stage below); bump version + sha256 together.
+ARG NVENCC_VERSION=9.19
+ARG NVENCC_DEB_SHA256=46242e060e0ffb90de1541d75081fb78a4ccb9611d4167eadf3d762f2f227d38
 
 # ============================================================
 # Stage 1: build patched DLLs from upstream source + ./patches/
@@ -59,6 +62,30 @@ RUN dotnet publish Jellyfin.Server/Jellyfin.Server.csproj \
         -o /publish
 
 # ============================================================
+# Stage 1b: fetch + verify the rigaya NVEncC binary
+# ============================================================
+# NVEncC is the DV-preserving transcode engine the v0.4.0 pipeline shells out to
+# (DV Profile 7->8.1 RPU copy, honest --master-display relabel) - things stock
+# jellyfin-ffmpeg cannot do. The published amd64 .deb is a single statically
+# linked binary; its ONLY external runtime dependency is libcuda.so.1, which the
+# NVIDIA container runtime injects at container start (exactly as it does for
+# jellyfin-ffmpeg's CUDA path - no extra image packages needed). Max glibc symbol
+# required is 2.30, so it runs on the bookworm-based runtime image (glibc 2.36).
+# Pinned by version + sha256 (declared global at the top) so CI builds are
+# reproducible.
+FROM debian:bookworm-slim AS nvencc
+ARG NVENCC_VERSION
+ARG NVENCC_DEB_SHA256
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fSL -o /tmp/nvencc.deb \
+        "https://github.com/rigaya/NVEnc/releases/download/${NVENCC_VERSION}/nvencc_${NVENCC_VERSION}_amd64.deb" \
+    && echo "${NVENCC_DEB_SHA256}  /tmp/nvencc.deb" | sha256sum -c - \
+    && dpkg-deb -x /tmp/nvencc.deb /nvencc-root \
+    && test -x /nvencc-root/usr/bin/nvencc
+
+# ============================================================
 # Stage 2: overlay patched DLLs onto the official runtime image
 # ============================================================
 FROM jellyfin/jellyfin:${UPSTREAM_VERSION}
@@ -84,6 +111,12 @@ COPY --from=builder /BUILD_INFO /BUILD_INFO
 # base image's Jellyfin DLLs remain binary-compatible with our overlaid pair.
 COPY --from=builder /publish/MediaBrowser.Controller.dll /jellyfin/MediaBrowser.Controller.dll
 COPY --from=builder /publish/Jellyfin.Api.dll            /jellyfin/Jellyfin.Api.dll
+
+# Bake the DV-preserving NVEncC engine (see the nvencc stage). The binary is
+# inert until the transcode path shells out to it (gated on
+# LIDSLABS_TRANSCODE_NVENCC); libcuda.so.1 comes from the NVIDIA container
+# runtime. World-executable so the non-root run user (1000:1000) can launch it.
+COPY --from=nvencc --chmod=755 /nvencc-root/usr/bin/nvencc /usr/bin/nvencc
 
 # HDR transcode is opt-in via env. Default is stock Jellyfin behavior.
 ENV LIDSLABS_ALLOW_HDR_TRANSCODE=0
