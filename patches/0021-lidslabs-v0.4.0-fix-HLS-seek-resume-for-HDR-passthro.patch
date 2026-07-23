@@ -1,7 +1,7 @@
 From 1aca222d6dbe7381bd14448f03ac60c6644133be Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 14:08:32 -0400
-Subject: [PATCH 21/23] lidslabs v0.4.0: fix HLS seek/resume for HDR
+Subject: [PATCH 21/24] lidslabs v0.4.0: fix HLS seek/resume for HDR
  passthrough (make_zero -> disabled)
 
 HDR passthrough transcodes special-cased the HLS timestamp args to
