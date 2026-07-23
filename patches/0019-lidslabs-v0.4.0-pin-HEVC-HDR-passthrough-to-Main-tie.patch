@@ -1,0 +1,83 @@
+From 9c53513fd8f4a2d0c263b2cd0e1996d59656c677 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 09:43:55 -0400
+Subject: [PATCH 19/19] lidslabs v0.4.0: pin HEVC HDR passthrough to Main tier
+ L5.1 (match advertised CODECS)
+
+Root cause of Apple AVPlayer (Swiftfin / Neptune AV) refusing the HDR transcode:
+NVENC picks general_tier_flag AND general_level_idc adaptively by bitrate, so a
+2160p ~16-19 Mbps HDR encode came out HIGH tier / L5.0 (hvc1.2.4.H150.B0) while
+DynamicHlsHelper advertises Main tier L5.1 (hvc1.2.4.L153.B0, patch 0010). AVPlayer
+validates the advertised codec string against the init segment's hvcC and, on a
+mismatch, fetches the media playlist then silently refuses -- never requests the
+init segment (verified in dev logs: master.m3u8 -> main.m3u8 -> stop). The same
+file direct-plays because its own hvcC carries the real values.
+
+Fix: force hevc_nvenc to Main tier at the level the manifest already advertises
+(2160p -> L5.1, else L5.0) for HDR passthrough. Main tier is the Apple-canonical
+form (Apple's own HDR HLS streams use hvc1.2.4.L153.B0) and our transcode bitrates
+fit Main tier L5.1 (~40 Mbps ceiling), so High tier is never needed. Verified on
+dev: the encode emits exactly hvc1.2.4.L153.B0, matching the advertised string.
+GetH265String stays at 'L' (its original hardcoded value was correct); the only
+change is pinning the encoder tier+level so the bitstream stops drifting away from
+it. Forcing a level at/above NVENC's own pick is safe.
+
+Scoped to hevc_nvenc HDR passthrough; copy and SDR paths untouched.
+---
+ Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs |  5 ++++
+ .../MediaEncoding/EncodingHelper.cs           | 23 +++++++++++++++++++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs b/Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs
+index 0efb7f45de..8b9c260b25 100644
+--- a/Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs
++++ b/Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs
+@@ -162,6 +162,11 @@ public static class HlsCodecStringHelpers
+         // The h265 syntax is a bit of a mystery at the time this comment was written.
+         // This is what I've found through various sources:
+         // FORMAT: [codecTag].[profile].[constraint?].L[level * 30].[UNKNOWN]
++        // NOTE: the 'L' here is the Main-tier marker (general_tier_flag=0). This is the
++        // form Apple's own HDR HLS streams use and AVPlayer expects; lidslabs pins the
++        // NVENC HDR transcode to Main tier (EncodingHelper -tier:v main) so the bitstream
++        // matches this 'L'. Our transcode bitrates fit Main tier L5.1 (~40 Mbps), so High
++        // tier is never needed.
+         StringBuilder result = new StringBuilder("hvc1", 16);
+ 
+         if (string.Equals(profile, "main10", StringComparison.OrdinalIgnoreCase)
+diff --git a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+index 516da8fa5c..641ca856c2 100644
+--- a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
++++ b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+@@ -2282,6 +2282,29 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 }
+             }
+ 
++            // HDR passthrough: pin hevc_nvenc to Main tier at a deterministic level so the
++            // bitstream matches the static HLS CODECS string DynamicHlsHelper advertises
++            // (hvc1.2.4.L<level>.B0 -- Main tier 'L', the form Apple's own HDR streams use).
++            // NVENC otherwise picks tier AND level adaptively by bitrate: observed a 2160p
++            // ~16-19 Mbps HDR encode emit HIGH tier at general_level_idc=150 (L5.0), while
++            // the manifest advertises Main tier L5.1 (153). Apple AVPlayer (Swiftfin /
++            // Neptune AV) validates the advertised codec string against the init segment's
++            // hvcC and, on a mismatch, fetches the media playlist then silently refuses
++            // (never requests the init segment) -- playback fails even though the client
++            // direct-plays the same file (whose own hvcC carries the real values, no
++            // manifest to contradict). Force Main tier + the resolution-based level the
++            // manifest advertises (2160p -> L5.1, else L5.0). Our transcode bitrates fit
++            // Main tier L5.1 (~40 Mbps ceiling), so High tier is never needed and Main tier
++            // is the Apple-canonical choice. Forcing a level at/above NVENC's own pick is
++            // safe -- the "-level can fail NVENC" caveat is about levels too LOW for the
++            // content. Verified on dev: emits exactly hvc1.2.4.L153.B0.
++            if (IsHdrPassthroughMode(state)
++                && string.Equals(videoEncoder, "hevc_nvenc", StringComparison.OrdinalIgnoreCase))
++            {
++                var hdrLevelToken = (state.OutputHeight >= 2160 || state.OutputWidth >= 3840) ? "5.1" : "5";
++                param += " -tier:v main -level:v " + hdrLevelToken;
++            }
++
+             var level = NormalizeTranscodingLevel(state, state.GetRequestedLevel(targetVideoCodec));
+ 
+             if (!string.IsNullOrEmpty(level))
+-- 
+2.43.0
+
