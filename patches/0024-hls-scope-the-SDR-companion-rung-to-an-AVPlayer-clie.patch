@@ -1,7 +1,7 @@
 From 837e9576368e8d8d9232ec8a36203c49b04d549e Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 15:40:02 -0400
-Subject: [PATCH 24/24] hls: scope the SDR companion rung to an AVPlayer client
+Subject: [PATCH 24/25] hls: scope the SDR companion rung to an AVPlayer client
  allowlist
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,7 +1,7 @@
 From 68ad7cef07b1566a14d425e8b2bffc5df330713f Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 00:03:06 -0400
-Subject: [PATCH 18/24] lidslabs v0.4.0: opt-in force-HEVC for Swiftfin
+Subject: [PATCH 18/25] lidslabs v0.4.0: opt-in force-HEVC for Swiftfin
  (env-toggleable, device test)
 
 Swiftfin transcodes a DV P7 (DOVIWithEL) title to h264 + HDR->SDR tonemap because

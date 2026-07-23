@@ -1,7 +1,7 @@
 From 56efda585efb59a77365e005f04182074e746901 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Thu, 2 Jul 2026 09:14:48 -0400
-Subject: [PATCH 10/24] lidslabs v0.3.2: advertise HEVC Level 5.1 for 2160p HLS
+Subject: [PATCH 10/25] lidslabs v0.3.2: advertise HEVC Level 5.1 for 2160p HLS
  transcode
 
 Apple AVPlayer (fMP4 HLS) refuses a 4k/2160p HEVC variant whose CODECS
