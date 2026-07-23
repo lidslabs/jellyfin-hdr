@@ -1,7 +1,7 @@
 From d037823b4ba8888f8c9967dc9772d5f6dc12d610 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Tue, 21 Jul 2026 00:52:55 -0400
-Subject: [PATCH 17/22] lidslabs v0.4.0: revert Swiftfin force-HEVC + DV P7 EL
+Subject: [PATCH 17/23] lidslabs v0.4.0: revert Swiftfin force-HEVC + DV P7 EL
  strip (0018 pivot)
 
 Device round 2026-07-21 showed both corrections forced Swiftfin onto a
