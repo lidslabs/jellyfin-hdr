@@ -1,3 +1,46 @@
+## SDR companion rung — an HDR ladder for AVPlayer, not a forced tonemap
+
+Status: Shipped in v0.3.3. Supersedes the v0.3.2 `LIDSLABS_FORCE_SDR_CLIENTS` lever.
+
+### Problem
+- Apple AVPlayer clients (Swiftfin, Neptune AV Player) black-screened on HDR
+  transcodes: they fetched the HLS master, then never requested a segment. v0.3.2
+  worked around this by force-tonemapping those clients' HDR titles to SDR
+  (`LIDSLABS_FORCE_SDR_CLIENTS`) — playable, but HDR-capable displays got SDR.
+
+### Root cause (captured, not assumed)
+- AVPlayer does not reject `VIDEO-RANGE=PQ` per se — it refuses to *enter* a master
+  that advertises a **single, HDR-only** variant. Netflix/Plex/stock-Jellyfin masters
+  always pair an SDR entrance with HDR; our HDR-passthrough transcode emitted only the
+  PQ variant, so AVPlayer had nothing to commit to. A separate defect compounded it:
+  the HDR encode's HEVC tier/level (chosen by NVENC bitrate) could disagree with the
+  advertised CODECS string, which AVPlayer also refuses.
+
+### Decision
+- Add an **H.264 SDR companion rung** to the HDR-passthrough master for AVPlayer
+  clients, and pin the HEVC encode to **Main tier** at the advertised level. AVPlayer
+  then commits to the master and selects the HDR variant on a capable build (Swiftfin
+  plays HDR start/seek/resume); a build that doesn't yet select PQ falls to the SDR
+  rung and plays SDR instead of black (Neptune AV) — a client ceiling, not a server
+  limit.
+- **Scope by allowlist, decided at PlaybackInfo.** Only Apple AVPlayer clients need
+  the rung; others pay for it (mpv-based Moonfin eagerly starts *both* rungs, so two
+  NVENC transcodes contend at startup). `LIDSLABS_SDR_LADDER_CLIENTS`
+  (default `swiftfin,neptune_av`) gates it. The decision is made at PlaybackInfo —
+  the only place the client name **and** `DeviceProfile.Name` are both reliable, so
+  Neptune AV Player and Trident are separable — and carried to the `master.m3u8`
+  request as a `TranscodingUrl` marker, because that request's `?ApiKey=` query auth
+  makes client identity unreliable at manifest-build time.
+- **Remove `LIDSLABS_FORCE_SDR_CLIENTS`.** With the ladder in place no client needs a
+  forced tonemap, and Moonfin's mpv washout (the lever's other user) was fixed
+  upstream. Real HDR reaches every capable client; the workaround is retired.
+
+### Why this over keeping the tonemap lever
+- Forcing SDR discards HDR the display can show. The ladder is strictly better: it
+  gives AVPlayer a valid entrance while still offering the HDR variant, so a capable
+  client renders HDR and only a limited one falls back to SDR — the same graceful
+  degradation stock clients already get, rather than a blanket per-client downgrade.
+
 ## Enhanced NVDEC coexistence — keep HDR working with the decoder default-on
 
 Status: Shipped in v0.3.2.
