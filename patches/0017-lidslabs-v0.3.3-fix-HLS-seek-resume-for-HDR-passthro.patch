@@ -1,0 +1,94 @@
+From d7a9f04b8499525bab1f083e49c1daadc5997fe1 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 17:30:40 -0400
+Subject: [PATCH 17/20] lidslabs v0.3.3: fix HLS seek/resume for HDR
+ passthrough
+
+The HDR passthrough path used -avoid_negative_ts make_zero (a stale
+MPEG-TS-era assumption), which resets an fMP4 seek segment's tfdt to ~0 while
+the media playlist positions it at N x seglen. Strict players (AVPlayer, mpv)
+stall on resume/seek. Use stock -avoid_negative_ts disabled so the seek
+segment keeps its real timeline offset.
+---
+ .../Controllers/DynamicHlsController.cs       | 26 +++++++++++-------
+ .../MediaEncoding/EncodingHelper.cs           | 27 +++++++------------
+ 2 files changed, 25 insertions(+), 28 deletions(-)
+
+diff --git a/Jellyfin.Api/Controllers/DynamicHlsController.cs b/Jellyfin.Api/Controllers/DynamicHlsController.cs
+index 53dda836f2..af54f1baaa 100644
+--- a/Jellyfin.Api/Controllers/DynamicHlsController.cs
++++ b/Jellyfin.Api/Controllers/DynamicHlsController.cs
+@@ -1672,16 +1672,22 @@ public class DynamicHlsController : BaseJellyfinApiController
+                 Path.GetFileNameWithoutExtension(outputPath));
+         }
+ 
+-        // Timestamp handling. Jellyfin defaults to "-copyts -avoid_negative_ts disabled"
+-        // for HLS seek accuracy. We use "make_zero" instead for HDR transcodes as a
+-        // defense against negative-timestamp issues that surfaced when this build
+-        // used fMP4 segments (fMP4 tfdt boxes are strictly unsigned; "disabled"
+-        // could wrap negative and crash ExoPlayer). We're back on MPEG-TS now and
+-        // TS has no tfdt box, so make_zero is largely defensive here - but it's
+-        // also harmless and the safest value if delivery ever changes back.
+-        var tsArgs = EncodingHelper.IsHdrPassthroughMode(state)
+-            ? "-copyts -avoid_negative_ts make_zero"
+-            : "-copyts -avoid_negative_ts disabled";
++        // Timestamp handling. Jellyfin uses "-copyts -avoid_negative_ts disabled"
++        // for HLS seek accuracy: on a seek transcode (-ss + -copyts) the segment's
++        // fMP4 tfdt (baseMediaDecodeTime) must stay at the seek offset so it matches
++        // where the media playlist places that segment (segment N at N*segLen).
++        //
++        // We previously special-cased HDR passthrough to "make_zero", added back when
++        // this build was briefly on fMP4 to defend against a negative-tfdt ExoPlayer
++        // crash, then left in place under the (now stale) assumption we had returned
++        // to MPEG-TS. We ship fMP4 today, and "make_zero" shifts the seek segment's
++        // tfdt to ~0 while the playlist still positions it at N*segLen -- that timeline
++        // mismatch makes strict players (Apple AVPlayer, mpv/Moonfin) stall on resume
++        // (accept the segment, never advance). Verified on dev: HDR resume produced a
++        // seek segment at ~0.125s for a playlist position of ~561s. From-start output
++        // is IDR-first with tfdt=0 under either value, so "disabled" does not
++        // reintroduce a negative tfdt. Use the stock value for HDR too.
++        var tsArgs = "-copyts -avoid_negative_ts disabled";
+ 
+         return string.Format(
+             CultureInfo.InvariantCulture,
+diff --git a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+index 641ca856c2..eebe82901f 100644
+--- a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
++++ b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+@@ -8065,24 +8065,15 @@ namespace MediaBrowser.Controller.MediaEncoding
+                         args += " -copyts";
+                     }
+ 
+-                    // HDR passthrough: use make_zero (not disabled) as a defensive
+-                    // timestamp normalization. Originally added to defend against
+-                    // negative tfdt boxes when this build used fMP4 segments
+-                    // (ExoPlayer rejects negative tfdt with "Top bit not zero").
+-                    // We're on MPEG-TS now and TS has no tfdt box, so this is
+-                    // largely defensive - but it's also harmless and safer than
+-                    // "disabled" if delivery is ever switched back. See the
+-                    // matching logic in DynamicHlsController.GetVideoArguments'
+-                    // tsArgs. This branch only fires when CopyTimestamps is
+-                    // enabled; the controller handles the default path.
+-                    if (IsHdrPassthroughMode(state))
+-                    {
+-                        args += " -avoid_negative_ts make_zero";
+-                    }
+-                    else
+-                    {
+-                        args += " -avoid_negative_ts disabled";
+-                    }
++                    // Use the stock "disabled" for HDR passthrough too. A prior
++                    // make_zero special-case (guarding a negative-tfdt ExoPlayer crash
++                    // seen on an earlier fMP4 iteration) broke HLS seek/resume once we
++                    // returned to fMP4: make_zero shifts a seek segment's tfdt to ~0
++                    // while the media playlist still positions it at N*segLen, so strict
++                    // players (AVPlayer, mpv) stall on resume. "disabled" preserves the
++                    // seek offset; from-start output is IDR-first (tfdt=0) so it stays
++                    // non-negative. See DynamicHlsController.GetVideoArguments tsArgs.
++                    args += " -avoid_negative_ts disabled";
+ 
+                     if (!(state.SubtitleStream is not null && state.SubtitleStream.IsExternal && !state.SubtitleStream.IsTextSubtitleStream))
+                     {
+-- 
+2.43.0
+

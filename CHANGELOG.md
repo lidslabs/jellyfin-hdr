@@ -1,4 +1,72 @@
 # Changelog
+## [0.3.3+jellyfin-10.11.11] - 2026-07-23
+
+Bug-fix bundle that makes **HDR play correctly on Apple AVPlayer clients** —
+including seek and resume — and retires the HDR→SDR tonemap workaround it replaces.
+The v0.3.2 approach forced AVPlayer-family clients to SDR because they black-screen
+on an HDR-over-HLS master; the real cause was the master advertising a *single* HDR
+variant, which AVPlayer refuses to enter. Adding an SDR companion variant lets
+AVPlayer commit and select HDR on its own. Same upstream Jellyfin (`v10.11.11`);
+patch series grows from 14 to 20.
+
+### Highlights
+- **Swiftfin (Apple TV) now plays HDR** — on initial start, seek, and resume. The
+  HDR-passthrough master gains an H.264 SDR companion rung so AVPlayer commits to
+  it and selects the HDR (PQ) variant.
+- **Neptune AV Player plays without the SDR-tonemap lever.** It commits via the
+  ladder and selects the SDR rung (a client-side ceiling in its current build), so
+  no forced tonemap is needed — SDR that plays instead of a black screen.
+- **Moonfin plays HDR** (its mpv render path was fixed upstream) and its seek/resume
+  now start reliably.
+- **Seek and resume no longer stall** on strict fMP4 players. The HDR path used a
+  stale MPEG-TS timestamp hack (`-avoid_negative_ts make_zero`) that reset a seek
+  segment's timeline; it now uses stock behavior.
+- **`LIDSLABS_FORCE_SDR_CLIENTS` is removed** — the SDR ladder supersedes it.
+- **New `LIDSLABS_SDR_LADDER_CLIENTS`** (default `swiftfin,neptune_av`) scopes the
+  SDR companion rung to Apple AVPlayer clients; everyone else gets the clean
+  HDR-only master.
+
+### Added
+- **H.264 SDR companion rung for AVPlayer clients (patch 0020).** On an
+  HDR-passthrough master, adds a tonemapped-SDR variant alongside the HDR one so
+  AVPlayer will start playback. Scoped by `LIDSLABS_SDR_LADDER_CLIENTS`, decided at
+  PlaybackInfo (where the client name and `DeviceProfile.Name` are both reliable —
+  Trident is correctly excluded) and carried to the master.m3u8 request as a
+  `TranscodingUrl` marker, since that request's `?ApiKey=` auth makes client
+  identity unreliable there.
+- **Optional forced HEVC for Swiftfin (patch 0015).** `swiftfin` may be listed in
+  `LIDSLABS_FORCE_HEVC_CLIENTS` to force a DV P7 title to clean HEVC HDR10 instead
+  of an h264 SDR tonemap.
+
+### Changed
+- **HEVC HDR passthrough is pinned to Main tier at the correct level (patch 0016).**
+  `-tier:v main -level:v` (5.1 for 2160p, else 5) so the NVENC output matches the
+  advertised `hvc1.2.4.L1xx.B0` CODECS string; AVPlayer refuses a tier/level
+  mismatch.
+- **Swiftfin gets stock handling by default (patch 0015).** The client-name gate is
+  re-pointed from the stale `"Jellyfin tvOS"` to `"Swiftfin tvOS"` (the v1.5 App
+  Store rename), and the DV P7 EL-strip / forced-transcode path is dropped —
+  on-device testing showed forcing a transcode was the wrong direction.
+
+### Removed
+- **`LIDSLABS_FORCE_SDR_CLIENTS` and its HDR→SDR tonemap path (patch 0019).**
+  Superseded by the SDR ladder: no client needs a forced tonemap now, and Moonfin's
+  washout (its original reason) was fixed upstream. The shared client matcher and
+  the honor-explicit-SDR-request gate are retained (the latter now backs the ladder
+  rung).
+
+### Fixed
+- **AVPlayer seek loses video / audio-only playback (patch 0018).** A play session
+  advertising both an HDR (hevc) and an SDR-companion (h264) variant hashed both to
+  the same transcode output path (codec absent from the hash), so their fMP4 init
+  segments clobbered each other — on seek, AVPlayer got an `avcC` init in front of
+  `hvcC` segments: frozen video, audio kept playing. The output path now includes
+  the video/audio codec.
+- **Seek/resume stall on fMP4 clients (patch 0017).** The HDR path used
+  `-avoid_negative_ts make_zero`, which reset a seek segment's `tfdt` to ~0 while
+  the playlist positioned it at N×seglen — strict players (AVPlayer, mpv) stalled.
+  Now uses stock `-avoid_negative_ts disabled`, preserving the seek offset.
+
 ## [0.3.2+jellyfin-10.11.11] - 2026-07-06
 
 Bug-fix bundle focused on **HDR that works whatever the client and decoder

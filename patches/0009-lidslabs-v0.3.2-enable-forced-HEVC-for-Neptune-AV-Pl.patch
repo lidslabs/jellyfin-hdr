@@ -1,7 +1,7 @@
 From 8593163c2292e88321a9f8399c0a5e40b4526494 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Wed, 1 Jul 2026 21:57:31 -0400
-Subject: [PATCH 09/14] lidslabs v0.3.2: enable forced HEVC for Neptune AV
+Subject: [PATCH 09/20] lidslabs v0.3.2: enable forced HEVC for Neptune AV
  Player (neptune_av) + fMP4 pairing
 
 Add a collision-safe neptune_av arm to LidslabsClientMatches so Neptune

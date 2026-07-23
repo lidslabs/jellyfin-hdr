@@ -11,7 +11,7 @@
 
 services:
   jellyfin:
-    image: ghcr.io/lidslabs/jellyfin-hdr:v0.3.0-jellyfin-10.11.11  # pin a version; avoid :latest in prod
+    image: ghcr.io/lidslabs/jellyfin-hdr:v0.3.3-jellyfin-10.11.11  # pin a version; avoid :latest in prod
     container_name: jellyfin
     restart: unless-stopped
     # GPU via the NVIDIA Container Toolkit (Compose device reservation —
@@ -29,8 +29,12 @@ services:
       # Jellyfin (tonemap-to-SDR) and the forced-HEVC override never fires.
       LIDSLABS_ALLOW_HDR_TRANSCODE: "1"
       # Optional. Comma-separated friendly client names forced onto an HEVC
-      # transcode for HDR sources. Recognized: neptune, streamyfin.
-      LIDSLABS_FORCE_HEVC_CLIENTS: "neptune,streamyfin"
+      # transcode. Recognized: neptune, streamyfin, neptune_av, swiftfin.
+      LIDSLABS_FORCE_HEVC_CLIENTS: "neptune,streamyfin,neptune_av"
+      # Optional. Apple AVPlayer clients that get an SDR companion rung on the
+      # HDR master so they start HDR playback. Defaults to swiftfin,neptune_av —
+      # omit unless you need to add/remove a client.
+      # LIDSLABS_SDR_LADDER_CLIENTS: "swiftfin,neptune_av"
       # NVENC capabilities the toolkit exposes to the container.
       NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
       TZ: America/New_York

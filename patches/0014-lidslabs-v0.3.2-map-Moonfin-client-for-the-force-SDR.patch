@@ -1,7 +1,7 @@
 From d3e24c29350960a31ce6777b62f00854ff33fe32 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Sat, 4 Jul 2026 01:11:24 -0400
-Subject: [PATCH 14/14] lidslabs v0.3.2: map Moonfin client for the force-SDR
+Subject: [PATCH 14/20] lidslabs v0.3.2: map Moonfin client for the force-SDR
  lever
 
 Add a "moonfin" arm to LidslabsClientMatches (DeviceProfile.Name
