@@ -1,0 +1,52 @@
+From 1ece3d79bbf0f483eafdfb4848ba0670542ffa09 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 14:28:54 -0400
+Subject: [PATCH 22/22] hls: key transcode output path on codec to stop SDR/HDR
+ variant init collision
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A single play session can advertise multiple server-side transcode
+variants: the HDR-passthrough master carries an H.264 SDR companion rung
+so AVPlayer clients (Swiftfin, Neptune AV) will start HDR playback. Those
+variants share MediaPath/UserAgent/DeviceId/PlaySessionId, so the output
+path hash — which omitted codec — resolved both to the same files. Their
+fMP4 init segments (<hash>-1.mp4) then clobbered each other last-writer-
+wins, handing the client an avcC init in front of hvcC segments (or the
+reverse) on seek: frozen/black video while stream-copied audio kept
+playing. mpv-based clients (Moonfin) never fetched the SDR rung and were
+unaffected, which matched the observed client split.
+
+Fold OutputVideoCodec + OutputAudioCodec into the path hash so each
+variant gets distinct init/segment files. Seeks within one codec still
+hash to the same base path, so warm-join and job reuse are unchanged.
+---
+ Jellyfin.Api/Helpers/StreamingHelpers.cs | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/Jellyfin.Api/Helpers/StreamingHelpers.cs b/Jellyfin.Api/Helpers/StreamingHelpers.cs
+index e17468cfae..2e02c089ef 100644
+--- a/Jellyfin.Api/Helpers/StreamingHelpers.cs
++++ b/Jellyfin.Api/Helpers/StreamingHelpers.cs
+@@ -373,7 +373,16 @@ public static class StreamingHelpers
+     /// <returns>The complete file path, including the folder, for the transcoding file.</returns>
+     private static string GetOutputFilePath(StreamState state, string outputFileExtension, IServerConfigurationManager serverConfigurationManager, string? deviceId, string? playSessionId)
+     {
+-        var data = $"{state.MediaPath}-{state.UserAgent}-{deviceId!}-{playSessionId!}";
++        // lidslabs: include the resolved output codecs in the hash. A single play session can
++        // advertise more than one server-side transcode variant (e.g. the HDR-passthrough master
++        // carries an H.264 SDR companion rung so AVPlayer will start HDR playback). Those variants
++        // share MediaPath/UserAgent/DeviceId/PlaySessionId, so without the codec they hash to the
++        // same output path and clobber each other's fMP4 init segment (-1.mp4) — last writer wins,
++        // leaving the client an avcC init in front of hvcC segments (or vice versa): frozen/black
++        // video while stream-copied audio keeps playing. Keying on codec gives each variant its own
++        // init/segment files. Seeks within one codec still hash to the same base path, so warm-join
++        // and reuse are unaffected.
++        var data = $"{state.MediaPath}-{state.UserAgent}-{deviceId!}-{playSessionId!}-{state.OutputVideoCodec}-{state.OutputAudioCodec}";
+ 
+         var filename = data.GetMD5().ToString("N", CultureInfo.InvariantCulture);
+         var ext = outputFileExtension.ToLowerInvariant();
+-- 
+2.43.0
+

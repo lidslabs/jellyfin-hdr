@@ -1,7 +1,7 @@
 From 275c45a8bdc81f022535d8d17234b317b484158e Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Thu, 23 Jul 2026 13:31:34 -0400
-Subject: [PATCH 20/21] lidslabs v0.4.0: add H.264 SDR companion to HDR
+Subject: [PATCH 20/22] lidslabs v0.4.0: add H.264 SDR companion to HDR
  passthrough master (AVPlayer experiment)
 
 Apple AVPlayer (Swiftfin / Neptune AV) silently refuses to start our HDR-only

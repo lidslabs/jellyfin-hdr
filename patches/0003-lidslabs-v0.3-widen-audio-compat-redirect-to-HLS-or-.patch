@@ -1,7 +1,7 @@
 From ca0cf1228bdb54064137cd8fdf1163fc8a9a2684 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Wed, 24 Jun 2026 14:27:50 -0400
-Subject: [PATCH 03/21] lidslabs v0.3: widen audio compat redirect to HLS or
+Subject: [PATCH 03/22] lidslabs v0.3: widen audio compat redirect to HLS or
  Progressive
 
 Extend the AC3/E-AC3 sidecar substitution (TrueHD/MLP/DTS-HD sources) from

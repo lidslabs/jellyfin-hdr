@@ -1,7 +1,7 @@
 From 415a27b03ea79a4cd51bb1247aeb510764ac5143 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Fri, 3 Jul 2026 20:44:47 -0400
-Subject: [PATCH 12/21] lidslabs v0.3.2: widen ContainerValidationRegexStr
+Subject: [PATCH 12/22] lidslabs v0.3.2: widen ContainerValidationRegexStr
  40->80 to fix self-rejected HLS master.m3u8 (LIDSLABS)
 
 Moonfin (and any client whose fMP4-HLS TranscodingProfile permits the full

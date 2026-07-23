@@ -1,7 +1,7 @@
 From 14b63cd2a6c69d27f57497d8533110a9664e227c Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Fri, 3 Jul 2026 23:43:15 -0400
-Subject: [PATCH 13/21] lidslabs v0.3.2: report the delivered range (not the
+Subject: [PATCH 13/22] lidslabs v0.3.2: report the delivered range (not the
  source) for HDR/DV transcodes
 
 On a transcode of an HDR/DV source, Jellyfin returns the source
