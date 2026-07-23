@@ -1,7 +1,7 @@
 From 636c599583478e5d0238ffb9e7629f3fa27765d4 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Wed, 24 Jun 2026 14:29:10 -0400
-Subject: [PATCH 05/20] lidslabs v0.3: gate-decision diagnostic log (Debug) for
+Subject: [PATCH 05/21] lidslabs v0.3: gate-decision diagnostic log (Debug) for
  forced-HEVC hook
 
 Dormant Debug-level log at the forced-HEVC eligibility point. Silent in a
