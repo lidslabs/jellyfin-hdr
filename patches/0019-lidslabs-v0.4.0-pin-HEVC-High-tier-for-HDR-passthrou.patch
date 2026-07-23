@@ -1,0 +1,125 @@
+From f035c2c4d2c9d9248e987b50d46f82e3ab146692 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 09:43:55 -0400
+Subject: [PATCH 19/19] lidslabs v0.4.0: pin HEVC High tier for HDR passthrough
+ + advertise matching CODECS
+
+NVENC selects general_tier_flag adaptively by bitrate (Main tier below
+~16 Mbps, High tier above), but the HLS CODECS string is static and
+GetH265String hardcoded the Main-tier 'L' char. So the master playlist
+advertised hvc1.2.4.L### while the bitstream was High tier. Apple AVPlayer
+(Swiftfin, Neptune AV) strictly validates CODECS against the bitstream and
+rejects the mismatch -> the HDR transcode fails even though the same content
+direct-plays fine (the file's own SPS carries the real tier, no manifest to
+contradict). Copy path works because it advertises the source's real string.
+
+Fix, scoped to HDR passthrough HEVC transcodes:
+- EncodingHelper.GetVideoQualityParam: force -tier:v high on hevc_nvenc so the
+  tier is deterministic (High tier covers our full bitrate range; no -level
+  forced since NVENC rejects some levels and the resolution level cap already
+  matches).
+- HlsCodecStringHelpers.GetH265String: new highTier param -> 'H' vs 'L'
+  (defaults to 'L', all other callers/paths unchanged).
+- DynamicHlsHelper.GetPlaylistVideoCodecs: advertise High tier when
+  IsHdrPassthroughMode && !copy.
+
+Client-agnostic manifest-correctness fix (same spirit as the L5.0->L5.1 cap),
+not a per-client workaround; also expected to restore HDR transcode for
+Neptune AV.
+---
+ Jellyfin.Api/Helpers/DynamicHlsHelper.cs       | 13 ++++++++++++-
+ Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs  | 13 ++++++++++---
+ .../MediaEncoding/EncodingHelper.cs            | 18 ++++++++++++++++++
+ 3 files changed, 40 insertions(+), 4 deletions(-)
+
+diff --git a/Jellyfin.Api/Helpers/DynamicHlsHelper.cs b/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
+index 295176c3c0..abd527a112 100644
+--- a/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
++++ b/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
+@@ -841,7 +841,18 @@ public class DynamicHlsHelper
+             || string.Equals(codec, "hevc", StringComparison.OrdinalIgnoreCase))
+         {
+             string profile = GetOutputVideoCodecProfile(state, "hevc");
+-            return HlsCodecStringHelpers.GetH265String(profile, level);
++
++            // HDR passthrough transcodes are pinned to High tier in the NVENC encoder
++            // args (EncodingHelper.GetVideoQualityParam adds -tier:v high) so the tier
++            // is deterministic across the bitrate range. NVENC otherwise picks the tier
++            // adaptively (Main below ~16 Mbps, High above), which left the advertised
++            // 'L' string mismatched against a High-tier bitstream -- Apple AVPlayer
++            // (Swiftfin / Neptune AV) rejects that mismatch and refuses the HDR
++            // transcode. Advertise 'H' to match. Copy and SDR paths keep Main-tier
++            // signalling untouched.
++            bool highTier = EncodingHelper.IsHdrPassthroughMode(state)
++                && !EncodingHelper.IsCopyCodec(state.OutputVideoCodec);
++            return HlsCodecStringHelpers.GetH265String(profile, level, highTier);
+         }
+ 
+         if (string.Equals(codec, "av1", StringComparison.OrdinalIgnoreCase))
+diff --git a/Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs b/Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs
+index 0efb7f45de..86f79f3dd0 100644
+--- a/Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs
++++ b/Jellyfin.Api/Helpers/HlsCodecStringHelpers.cs
+@@ -156,12 +156,19 @@ public static class HlsCodecStringHelpers
+     /// </summary>
+     /// <param name="profile">H.265 profile.</param>
+     /// <param name="level">H.265 level.</param>
++    /// <param name="highTier">Whether the bitstream is High tier (general_tier_flag=1) rather than Main tier.</param>
+     /// <returns>H.265 string.</returns>
+-    public static string GetH265String(string? profile, int level)
++    public static string GetH265String(string? profile, int level, bool highTier = false)
+     {
+         // The h265 syntax is a bit of a mystery at the time this comment was written.
+         // This is what I've found through various sources:
+-        // FORMAT: [codecTag].[profile].[constraint?].L[level * 30].[UNKNOWN]
++        // FORMAT: [codecTag].[profile].[constraint?].[tier][level * 30].[UNKNOWN]
++        // The tier char is 'L' for Main tier (general_tier_flag=0) and 'H' for High
++        // tier (general_tier_flag=1). Strict HLS players (Apple AVPlayer) reject the
++        // stream if the advertised tier does not match the bitstream, so callers that
++        // pin the encoder to High tier must advertise 'H' here. See
++        // DynamicHlsHelper.GetPlaylistVideoCodecs and the NVENC -tier:v high in
++        // EncodingHelper.GetVideoQualityParam.
+         StringBuilder result = new StringBuilder("hvc1", 16);
+ 
+         if (string.Equals(profile, "main10", StringComparison.OrdinalIgnoreCase)
+@@ -175,7 +182,7 @@ public static class HlsCodecStringHelpers
+             result.Append(".1.4");
+         }
+ 
+-        result.Append(".L")
++        result.Append(highTier ? ".H" : ".L")
+             .Append(level)
+             .Append(".B0");
+ 
+diff --git a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+index 516da8fa5c..96368dd1ca 100644
+--- a/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
++++ b/MediaBrowser.Controller/MediaEncoding/EncodingHelper.cs
+@@ -2282,6 +2282,24 @@ namespace MediaBrowser.Controller.MediaEncoding
+                 }
+             }
+ 
++            // HDR passthrough: pin hevc_nvenc to High tier. NVENC otherwise selects
++            // general_tier_flag adaptively by bitrate (Main tier below ~16 Mbps, High
++            // tier above), but the HLS CODECS string we advertise is static. That tier
++            // drift makes the manifest say Main ('hvc1.2.4.L###') while the bitstream is
++            // High tier -- strict HLS players (Apple AVPlayer -> Swiftfin / Neptune AV)
++            // reject the mismatch and refuse the HDR transcode (playback fails even
++            // though the client can direct-play the same content). Forcing High tier
++            // makes it deterministic so it matches the 'H' advertised in
++            // HlsCodecStringHelpers.GetH265String. High tier covers our full bitrate
++            // range, so it never constrains quality; no -level is forced (NVENC rejects
++            // some levels), the resolution-based level cap already matches what NVENC
++            // emits.
++            if (IsHdrPassthroughMode(state)
++                && string.Equals(videoEncoder, "hevc_nvenc", StringComparison.OrdinalIgnoreCase))
++            {
++                param += " -tier:v high";
++            }
++
+             var level = NormalizeTranscodingLevel(state, state.GetRequestedLevel(targetVideoCodec));
+ 
+             if (!string.IsNullOrEmpty(level))
+-- 
+2.43.0
+
