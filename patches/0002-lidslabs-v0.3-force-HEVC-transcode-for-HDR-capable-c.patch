@@ -1,7 +1,7 @@
 From 8aefa0070dd213e179aeeadca9667a08678bd739 Mon Sep 17 00:00:00 2001
 From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
 Date: Wed, 24 Jun 2026 14:27:50 -0400
-Subject: [PATCH 02/14] lidslabs v0.3: force HEVC transcode for HDR-capable
+Subject: [PATCH 02/17] lidslabs v0.3: force HEVC transcode for HDR-capable
  clients
 
 Rewrite the client's video TranscodingProfiles to prepend hevc when the
