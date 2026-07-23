@@ -1,0 +1,166 @@
+From 88020fe2a8b0a8e62d7a2285832834ad1d5d9906 Mon Sep 17 00:00:00 2001
+From: Lids Labs <55252374+lidslabs@users.noreply.github.com>
+Date: Thu, 23 Jul 2026 17:30:40 -0400
+Subject: [PATCH 20/20] lidslabs v0.3.3: add H.264 SDR companion rung for
+ AVPlayer clients
+
+Apple AVPlayer clients refuse an HDR-only HLS master (fetch the playlist,
+never request a segment). Add an H.264 tonemapped-SDR companion rung to the
+HDR-passthrough master so they commit and (capable builds) select the PQ
+variant. Scoped to known AVPlayer clients (swiftfin,neptune_av; env
+LIDSLABS_SDR_LADDER_CLIENTS): the decision is made at PlaybackInfo, where the
+client name and DeviceProfile.Name are both reliable, and carried to the
+master.m3u8 GET as a TranscodingUrl marker (that GET is ?ApiKey=-authenticated,
+where client identity is unreliable). Non-AVPlayer clients (Trident, Moonfin,
+Streamyfin, Android TV, web) get the clean HDR-only master.
+---
+ .../Controllers/MediaInfoController.cs        | 53 ++++++++++++++++
+ Jellyfin.Api/Helpers/DynamicHlsHelper.cs      | 61 +++++++++++++++++++
+ 2 files changed, 114 insertions(+)
+
+diff --git a/Jellyfin.Api/Controllers/MediaInfoController.cs b/Jellyfin.Api/Controllers/MediaInfoController.cs
+index 7d3b9480a4..613aba2076 100644
+--- a/Jellyfin.Api/Controllers/MediaInfoController.cs
++++ b/Jellyfin.Api/Controllers/MediaInfoController.cs
+@@ -382,6 +382,59 @@ public class MediaInfoController : BaseJellyfinApiController
+                     Request.HttpContext.GetNormalizedRemoteIP());
+             }
+ 
++            // lidslabs v0.3.3: tag the transcode for the SDR companion rung. The
++            // HDR-passthrough master carries an H.264 SDR rung ONLY for Apple AVPlayer
++            // clients (they refuse an HDR-only master); every other client already worked
++            // without it and some regress with it (Moonfin spins up both rungs -> ~10s
++            // black at start). The allowlist is resolved HERE, not at the master.m3u8 GET:
++            // this is the only place both the client name (Swiftfin posts DeviceProfile.Name
++            // = null, so User.GetClient() is its only handle) AND DeviceProfile.Name (the
++            // only field separating Neptune AV from Trident — same client name + UA) are
++            // reliable. The master GET is ?ApiKey=-authenticated, where GetClient() does not
++            // resolve for AVPlayer clients. We append LidslabsSdrLadder=1 to the
++            // TranscodingUrl; DynamicHlsHelper reads that marker back (the client echoes the
++            // URL verbatim) and adds the rung. Default set swiftfin,neptune_av; Trident,
++            // Streamyfin, Moonfin, Android TV, web are excluded. Tunable via
++            // LIDSLABS_SDR_LADDER_CLIENTS.
++            var sdrLadderClients = Environment.GetEnvironmentVariable("LIDSLABS_SDR_LADDER_CLIENTS");
++            if (string.IsNullOrWhiteSpace(sdrLadderClients))
++            {
++                sdrLadderClients = "swiftfin,neptune_av";
++            }
++
++            var lidslabsSdrLadderEligible =
++                LidslabsClientMatches(profile.Name, sdrLadderClients)
++                || (lidslabsSwiftfinClient
++                    && sdrLadderClients.Contains("swiftfin", StringComparison.OrdinalIgnoreCase));
++
++            _logger.LogDebug(
++                "lidslabs.sdrLadder gate: profile={ProfileName}, client={Client}, clients={Clients}, eligible={Eligible}",
++                profile.Name,
++                User.GetClient(),
++                sdrLadderClients,
++                lidslabsSdrLadderEligible);
++
++            if (lidslabsSdrLadderEligible)
++            {
++                foreach (var mediaSource in info.MediaSources)
++                {
++                    if (string.IsNullOrEmpty(mediaSource.TranscodingUrl))
++                    {
++                        continue;
++                    }
++
++                    mediaSource.TranscodingUrl += mediaSource.TranscodingUrl.Contains('?', StringComparison.Ordinal)
++                        ? "&LidslabsSdrLadder=1"
++                        : "?LidslabsSdrLadder=1";
++
++                    _logger.LogInformation(
++                        "lidslabs: SDR-ladder marker added to TranscodingUrl for profile={ProfileName}, client={Client}, item={ItemId}",
++                        profile.Name,
++                        User.GetClient(),
++                        itemId);
++                }
++            }
++
+             // lidslabs v0.3.2: describe the DELIVERED stream, not the source, for a
+             // transcode of a DV/HDR source.
+             // Jellyfin returns the source MediaStreams verbatim even when the source is
+diff --git a/Jellyfin.Api/Helpers/DynamicHlsHelper.cs b/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
+index 295176c3c0..e6d1ee728a 100644
+--- a/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
++++ b/Jellyfin.Api/Helpers/DynamicHlsHelper.cs
+@@ -268,6 +268,48 @@ public class DynamicHlsHelper
+                 state.OutputVideoCodec = "copy";
+             }
+ 
++            // lidslabs v0.3.3: the HDR *passthrough transcode* path emits a single
++            // VIDEO-RANGE=PQ variant with no SDR companion. Apple AVPlayer clients (Swiftfin,
++            // Neptune AV) silently refuse to start such an HDR-only master -- they fetch the
++            // media playlist then never request a segment (stall with no error). Stock
++            // Jellyfin already provides an SDR entrance for HDR content, but only on the copy
++            // path (the IsCopyCodec guards above); our passthrough is a transcode
++            // (OutputVideoCodec = hevc), so it never got one. Add an H.264 (tonemapped SDR)
++            // companion so the master advertises an HDR+SDR ladder; on an HDR-capable display
++            // AVPlayer commits to the master and (for capable builds) selects the PQ variant
++            // (verified: Swiftfin plays HDR from start/seek/resume; Neptune AV plays SDR).
++            //
++            // SCOPE (LidslabsSdrLadderRequested): fire ONLY when PlaybackInfo tagged this
++            // stream for the known-AVPlayer allowlist. Every other client already worked
++            // without the rung and pays a real cost if it gets one -- e.g. Moonfin eagerly
++            // spins up BOTH rungs at start, so two 1440p NVENC transcodes contend on CUDA init
++            // + source probe and starve the opening segments (~10 s black before it
++            // self-heals). Clients that play HDR natively (Trident), via mpv (Streamyfin), or
++            // that we have not characterised (Android TV, web) therefore get the clean
++            // HDR-only master. The decision is made at PlaybackInfo (MediaInfoController),
++            // where the client name AND DeviceProfile.Name are both reliable, and carried here
++            // as a TranscodingUrl marker; the master.m3u8 GET's ?ApiKey= auth makes
++            // User.GetClient() unreliable at this point, so we must not re-derive it here.
++            if (EncodingHelper.IsHdrPassthroughMode(state)
++                && !EncodingHelper.IsCopyCodec(state.OutputVideoCodec)
++                && LidslabsSdrLadderRequested())
++            {
++                var originalVideoCodec = state.OutputVideoCodec;
++                state.OutputVideoCodec = "h264";
++
++                var sdrPlaylistQuery = new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>(playlistQuery);
++                sdrPlaylistQuery["VideoCodec"] = "h264";
++                sdrPlaylistQuery["AllowVideoStreamCopy"] = "false";
++
++                var sdrVideoUrl = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(baseUrl, sdrPlaylistQuery);
++
++                // HACK: Use the same bitrate so that the client can choose by other attributes, such as color range.
++                AppendPlaylist(builder, state, sdrVideoUrl, totalBitrate, subtitleGroup);
++
++                // Restore the real (transcode) output codec.
++                state.OutputVideoCodec = originalVideoCodec;
++            }
++
+             // Provide Level 5.0 entrance for backward compatibility.
+             // e.g. Apple A10 chips refuse the master playlist containing SDR HEVC Main Level 5.1 video,
+             // but in fact it is capable of playing videos up to Level 6.1.
+@@ -323,6 +365,25 @@ public class DynamicHlsHelper
+         return new FileContentResult(Encoding.UTF8.GetBytes(builder.ToString()), MimeTypes.GetMimeType("playlist.m3u8"));
+     }
+ 
++    /// <summary>
++    /// lidslabs v0.3.3: whether the SDR companion rung was requested for this stream.
++    /// The rung exists solely to make Apple AVPlayer clients commit to an HDR master; every
++    /// other client already worked without it and some pay a real cost for it (see the call
++    /// site). The AVPlayer-client decision is made upstream at PlaybackInfo — the only place
++    /// where both the authenticated client name AND DeviceProfile.Name are reliable — which
++    /// tags the TranscodingUrl with LidslabsSdrLadder=1. We must NOT re-derive it here: the
++    /// master.m3u8 GET is authenticated by an ?ApiKey= query for AVPlayer clients, so
++    /// User.GetClient() does not reliably resolve the client at this point (it returned
++    /// nothing for Swiftfin while resolving for Neptune — the exact split that regressed).
++    /// Reading the marker the client echoes back is auth-independent and precise (Trident,
++    /// separable from Neptune AV only by DeviceProfile.Name, is correctly excluded upstream).
++    /// </summary>
++    private bool LidslabsSdrLadderRequested()
++        => string.Equals(
++            _httpContextAccessor.HttpContext?.Request.Query["LidslabsSdrLadder"].ToString(),
++            "1",
++            StringComparison.Ordinal);
++
+     private StringBuilder AppendPlaylist(StringBuilder builder, StreamState state, string url, int bitrate, string? subtitleGroup)
+     {
+         var playlistBuilder = new StringBuilder();
+-- 
+2.43.0
+
